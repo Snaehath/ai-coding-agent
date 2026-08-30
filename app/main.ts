@@ -95,16 +95,85 @@ type JsonRpcResponse = {
  * Runs the CLI mode: processes a single prompt and returns the response.
  * Uses the shared agentic loop to handle tool calls until completion.
  */
-async function runCliMode(prompt: string) {
-  const result = await runAgentMode(prompt, []);
+async function runCliMode(prompt: string, isContinue: boolean) {
+  let sessionFile: string;
+  let history: any[] = [];
+  if (isContinue) {
+    const latest = getLatestSessionFile();
+    if (latest) {
+      sessionFile = latest;
+      history = loadSessionMessages(latest);
+    } else {
+      sessionFile = createNewSessionPath();
+    }
+  } else {
+    sessionFile = createNewSessionPath();
+  }
+  const result = await runAgentMode(prompt, history, sessionFile);
   process.stdout.write(result + "\n");
+}
+
+const SESSION_DIR = path.resolve(process.cwd(), ".agents", "sessions");
+
+function ensureSessionDir() {
+  if (!fs.existsSync(SESSION_DIR)) {
+    fs.mkdirSync(SESSION_DIR, { recursive: true });
+  }
+}
+
+function createNewSessionPath(): string {
+  ensureSessionDir();
+  const sessionId = `session_${Date.now()}`;
+  return path.join(SESSION_DIR, `${sessionId}.jsonl`);
+}
+
+function appendSessionMessage(sessionFilePath: string, message: any) {
+  ensureSessionDir();
+  fs.appendFileSync(sessionFilePath, JSON.stringify(message) + "\n", {
+    encoding: "utf-8",
+  });
+}
+
+function getLatestSessionFile(): string | null {
+  ensureSessionDir();
+  const files = fs
+    .readdirSync(SESSION_DIR)
+    .filter((f) => f.endsWith(".jsonl"))
+    .map((f) => ({
+      path: path.join(SESSION_DIR, f),
+      mtime: fs.statSync(path.join(SESSION_DIR, f)).mtime.getTime(),
+    }))
+    .sort((a, b) => a.mtime - b.mtime);
+  return files.length > 0 ? files[0].path : null;
+}
+
+function loadSessionMessages(sessionFilePath: string): any[] {
+  if (!fs.existsSync(sessionFilePath)) {
+    return [];
+  }
+  const lines = fs.readFileSync(sessionFilePath, "utf-8").split("\n");
+  const messages = [];
+  for (const line of lines) {
+    if (line.trim()) {
+      try {
+        messages.push(JSON.parse(line));
+      } catch {
+        // Ignore malformed lines
+      }
+    }
+  }
+  return messages;
 }
 
 /**
  * Runs the agent mode: maintains a session and processes prompts with tool calls.
  * Returns the final response from Claude as a string.
  */
-async function runAgentMode(prompt: string, messages: any[]): Promise<string> {
+async function runAgentMode(
+  prompt: string,
+  messages: any[],
+  sessionFilePath?: string,
+): Promise<string> {
   const apiKey = process.env.OPENROUTER_API_KEY;
   const baseURL =
     process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1";
@@ -130,6 +199,9 @@ async function runAgentMode(prompt: string, messages: any[]): Promise<string> {
 
   // Add user prompt to session messages
   messages.push({ role: "user", content: prompt });
+  if (sessionFilePath) {
+    appendSessionMessage(sessionFilePath, { role: "user", content: prompt });
+  }
 
   while (true) {
     // Call Claude API with available tools
@@ -197,6 +269,10 @@ async function runAgentMode(prompt: string, messages: any[]): Promise<string> {
 
     const message = response.choices[0].message;
     messages.push(message as any);
+
+    if (sessionFilePath) {
+      appendSessionMessage(sessionFilePath, message);
+    }
 
     // 1. Collect native tool calls or parse from message.content
     let toolCalls: any[] = message.tool_calls ?? [];
@@ -296,6 +372,14 @@ async function runAgentMode(prompt: string, messages: any[]): Promise<string> {
           tool_call_id: toolCall.id,
           content: fileContent,
         });
+
+        if (sessionFilePath) {
+          appendSessionMessage(sessionFilePath, {
+            role: "tool",
+            tool_call_id: toolCall.id,
+            content: fileContent,
+          });
+        }
       }
 
       if (toolCall.function?.name === "Write") {
@@ -320,6 +404,14 @@ async function runAgentMode(prompt: string, messages: any[]): Promise<string> {
           tool_call_id: toolCall.id,
           content: writeResult,
         });
+
+        if (sessionFilePath) {
+          appendSessionMessage(sessionFilePath, {
+            role: "tool",
+            tool_call_id: toolCall.id,
+            content: writeResult,
+          });
+        }
       }
 
       if (toolCall.function?.name === "Bash") {
@@ -347,6 +439,14 @@ async function runAgentMode(prompt: string, messages: any[]): Promise<string> {
           tool_call_id: toolCall.id,
           content: bashResult,
         });
+
+        if (sessionFilePath) {
+          appendSessionMessage(sessionFilePath, {
+            role: "tool",
+            tool_call_id: toolCall.id,
+            content: bashResult,
+          });
+        }
       }
     }
   }
@@ -459,10 +559,10 @@ async function runServerMode() {
  */
 async function main() {
   const args = process.argv.slice(2);
+  const isContinue = args.includes("--continue") || args.includes("-c");
   const pIndex = args.indexOf("-p");
-
   if (pIndex !== -1 && args[pIndex + 1]) {
-    await runCliMode(args[pIndex + 1]);
+    await runCliMode(args[pIndex + 1], isContinue);
   } else {
     await runServerMode();
   }
