@@ -1,0 +1,14 @@
+# Dependencies
+node_modules/
+
+# Environment variables & secrets
+.env
+.env.*
+!.env.example
+
+# Local session storage & agent artifacts
+.agents/
+.claude/
+*.log
+
+# Temporary test files
