@@ -171,10 +171,34 @@ function getSessionFileByID(sessionId: string): string {
   return fs.existsSync(fullPath) ? fullPath : "";
 }
 
-/**
- * Runs the agent mode: maintains a session and processes prompts with tool calls.
- * Returns the final response from Claude as a string.
- */
+function listAllSessions(): any[] {
+  ensureSessionDir();
+  const files = fs
+    .readdirSync(SESSION_DIR)
+    .filter((f) => f.endsWith(".jsonl"))
+    .map((f) => {
+      const fullPath = path.join(SESSION_DIR, f);
+      const stat = fs.statSync(fullPath);
+      const messages = loadSessionMessages(fullPath);
+      const lastUserMessage = messages.filter((m) => m.role === "user").at(-1);
+
+      return {
+        id: f.replace(/\.jsonl$/, ""),
+        createdAt: new Date(stat.birthtimeMs || stat.mtimeMs).toISOString(),
+        updatedAt: new Date(stat.mtimeMs).toISOString(),
+        messageCount: messages.length,
+        title: lastUserMessage?.content?.slice(0, 40) ?? "Empty Session",
+      };
+    })
+    .sort(
+      (a, b) =>
+        new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+    );
+
+  return files;
+}
+
+// runs the agent mode: maintains a session and processes prompts with tool calls.
 async function runAgentMode(
   prompt: string,
   messages: any[],
@@ -455,12 +479,10 @@ async function runAgentMode(
   }
 }
 
-/**
- * Runs the server mode: listens for JSON-RPC requests and processes them accordingly.
- * Supports initialize, ping, and session/prompt methods.
- */
+// runs the server mode: maintains a session and processes prompts with tool calls.
 async function runServerMode() {
-  const sessionMessages: any[] = [];
+  let currentSessionFile = createNewSessionPath();
+  let sessionMessages: any[] = [];
   const rl = readline.createInterface({
     input: process.stdin,
     terminal: false,
@@ -486,8 +508,65 @@ async function runServerMode() {
       continue;
     }
 
+    if (request.method === "session/list") {
+      const sessions = listAllSessions();
+      const response: JsonRpcResponse = {
+        jsonrpc: "2.0",
+        id: request.id ?? null,
+        result: { sessions },
+      };
+      process.stdout.write(JSON.stringify(response) + "\n");
+    } else if (request.method === "session/new") {
+      currentSessionFile = createNewSessionPath();
+      sessionMessages = [];
+      const sessionId = path.basename(currentSessionFile, ".jsonl");
+      const response: JsonRpcResponse = {
+        jsonrpc: "2.0",
+        id: request.id ?? null,
+        result: { sessionId },
+      };
+      process.stdout.write(JSON.stringify(response) + "\n");
+    } else if (request.method === "session/resume") {
+      const targetId = request.params?.sessionId;
+      const targetFile = getSessionFileByID(targetId);
+      if (!targetFile) {
+        const errorResponse: JsonRpcResponse = {
+          jsonrpc: "2.0",
+          id: request.id ?? null,
+          error: { code: -32001, message: `Session not found: ${targetId}` },
+        };
+        process.stdout.write(JSON.stringify(errorResponse) + "\n");
+      } else {
+        currentSessionFile = targetFile;
+        sessionMessages = loadSessionMessages(targetFile);
+        const response: JsonRpcResponse = {
+          jsonrpc: "2.0",
+          id: request.id ?? null,
+          result: { sessionId: targetId, messageCount: sessionMessages.length },
+        };
+        process.stdout.write(JSON.stringify(response) + "\n");
+      }
+    } else if (request.method === "session/prompt") {
+      const userPrompt = request.params?.prompt ?? "";
+      try {
+        const result = await runAgentMode(
+          userPrompt,
+          sessionMessages,
+          currentSessionFile,
+        );
+        const response: JsonRpcResponse = {
+          jsonrpc: "2.0",
+          id: request.id ?? null,
+          result: { content: result },
+        };
+        process.stdout.write(JSON.stringify(response) + "\n");
+      } catch (error: any) {
+        // error handling
+      }
+    }
+
     // Handle initialize request
-    if (request.method === "initialize") {
+    else if (request.method === "initialize") {
       const response: JsonRpcResponse = {
         jsonrpc: "2.0",
         id: request.id ?? null,
@@ -555,11 +634,7 @@ async function runServerMode() {
   }
 }
 
-/**
- * Main entry point: determines whether to run in CLI mode or server mode.
- * CLI mode: -p <prompt> runs a single prompt and exits.
- * Server mode: listens for JSON-RPC requests on stdin.
- */
+// main entry point of the application
 async function main() {
   const args = process.argv.slice(2);
   const isContinue = args.includes("--continue") || args.includes("-c");
