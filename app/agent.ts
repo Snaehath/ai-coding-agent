@@ -50,6 +50,9 @@ export function resolveFilePath(raw: any): string {
       : String(raw);
 
   filePath = filePath.trim();
+  // Strip Git Bash prefix
+  filePath = filePath.replace(/^[A-Za-z]:[/\\]Program Files[/\\]Git[/\\]/i, "");
+  filePath = filePath.replace(/^(?:explain|fix|test)\s+/i, "");
   if (!filePath) return "";
 
   if (fs.existsSync(filePath)) return filePath;

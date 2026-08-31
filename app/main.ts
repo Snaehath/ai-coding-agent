@@ -8,9 +8,11 @@ import {
   getSessionFileByID,
   listAllSessions,
   loadSessionMessages,
+  rewriteSessionFile,
 } from "./session.ts";
 import { loadAllSkills } from "./skills.ts";
 import { loadPermissionConfig } from "./permissions.ts";
+import { loadAllCommands, expandCommandTemplate } from "./commands.ts";
 
 // ANSI terminal colors
 export const colors = {
@@ -67,7 +69,22 @@ async function runCliMode(
     sessionFile = createNewSessionPath();
   }
 
-  const result = await runAgentMode(prompt, history, sessionFile, "cli");
+  let actualPrompt = prompt.trim();
+  // Normalize Git Bash MSYS2 path translation (e.g. C:/Program Files/Git/explain -> /explain)
+  actualPrompt = actualPrompt.replace(/^[A-Za-z]:[/\\]Program Files[/\\]Git[/\\]/i, "/");
+
+  if (actualPrompt.startsWith("/")) {
+    const [cmd, ...rest] = actualPrompt.split(/\s+/);
+    const cmdName = cmd.slice(1).toLowerCase();
+    const customCommands = loadAllCommands();
+    if (customCommands.has(cmdName)) {
+      const customCmd = customCommands.get(cmdName)!;
+      actualPrompt = expandCommandTemplate(customCmd.template, rest.join(" "));
+      process.stdout.write(colors.dim(`↳ [Custom Command /${cmdName}] ${customCmd.description}\n`));
+    }
+  }
+
+  const result = await runAgentMode(actualPrompt, history, sessionFile, "cli");
   process.stdout.write(result + "\n");
 }
 
@@ -75,6 +92,7 @@ async function runCliMode(
 async function runReplMode(options: { isContinue?: boolean; resumeId?: string }) {
   let currentSessionFile: string;
   let history: any[] = [];
+  const customCommands = loadAllCommands();
 
   // Session initialization
   if (options.resumeId) {
@@ -152,7 +170,6 @@ async function runReplMode(options: { isContinue?: boolean; resumeId?: string })
         multiLineBuffer = [];
         if (!fullPrompt) { ask(); continue; }
         // Process accumulated multi-line prompt below
-        rawLine; // placeholder
       } else {
         multiLineBuffer.push(rawLine);
         ask();
@@ -174,10 +191,11 @@ async function runReplMode(options: { isContinue?: boolean; resumeId?: string })
           process.exit(0);
           break;
 
-        case "/help":
+        case "/help": {
           console.log(
-            "\n" + colors.bold("Slash commands:") +
+            "\n" + colors.bold("System Commands:") +
             `\n  ${colors.boldYellow("/help")}             Show this menu` +
+            `\n  ${colors.boldYellow("/compact")}          Compress conversation history to save tokens` +
             `\n  ${colors.boldYellow("/model [name]")}     View or switch active LLM model` +
             `\n  ${colors.boldYellow("/history")}          View recent conversation history` +
             `\n  ${colors.boldYellow("/paste")}            Start multi-line paste mode` +
@@ -186,9 +204,40 @@ async function runReplMode(options: { isContinue?: boolean; resumeId?: string })
             `\n  ${colors.boldYellow("/clear")} | ${colors.boldYellow("/new")}     Start a fresh session` +
             `\n  ${colors.boldYellow("/sessions")} | ${colors.boldYellow("/list")} List saved sessions` +
             `\n  ${colors.boldYellow("/resume <id>")}    Resume an existing session` +
-            `\n  ${colors.boldYellow("/exit")} | ${colors.boldYellow("/quit")}     Exit\n`,
+            `\n  ${colors.boldYellow("/exit")} | ${colors.boldYellow("/quit")}     Exit`,
           );
+
+          const customList = Array.from(customCommands.values());
+          if (customList.length > 0) {
+            console.log("\n" + colors.bold("Custom Slash Commands:"));
+            for (const c of customList) {
+              console.log(`  ${colors.boldCyan("/" + c.name)}  ${colors.gray(c.description)}`);
+            }
+          }
+          console.log();
           break;
+        }
+
+        case "/compact": {
+          if (history.length <= 2) {
+            console.log(colors.gray("Session history is too short to compact.\n"));
+            break;
+          }
+          console.log(colors.dim("  Compressing session history with LLM..."));
+          try {
+            const summaryPrompt = "Summarize the key facts, decisions, and instructions from our conversation so far in 3-4 concise bullet points.";
+            const summary = await runAgentMode(summaryPrompt, history, currentSessionFile, "cli");
+            history = [
+              { role: "user", content: `[Context Summary of prior conversation]:\n${summary}` },
+              { role: "assistant", content: "Understood. I have loaded the compressed session context and am ready to proceed." },
+            ];
+            rewriteSessionFile(currentSessionFile, history);
+            console.log(colors.green(`✨ Session compacted to 2 messages.\n`));
+          } catch (e: any) {
+            console.log(colors.red(`Failed to compact session: ${e.message}\n`));
+          }
+          break;
+        }
 
         case "/model": {
           const newModel = rest[0];
@@ -294,8 +343,40 @@ async function runReplMode(options: { isContinue?: boolean; resumeId?: string })
           break;
         }
 
-        default:
-          console.log(colors.red(`Unknown command: ${cmd}  (type /help)\n`));
+        default: {
+          const cmdName = cmd.slice(1).toLowerCase();
+          if (customCommands.has(cmdName)) {
+            const customCmd = customCommands.get(cmdName)!;
+            const rawArgs = rest.join(" ");
+            const expandedPrompt = expandCommandTemplate(customCmd.template, rawArgs);
+            console.log(colors.dim(`  ↳ [Custom Command /${cmdName}] ${customCmd.description}`));
+
+            try {
+              isRunning = true;
+              let streamedAny = false;
+              const onToken = (token: string) => {
+                if (!streamedAny) {
+                  process.stdout.write(colors.boldCyan("agent ❯ "));
+                  streamedAny = true;
+                }
+                process.stdout.write(token);
+              };
+
+              const result = await runAgentMode(expandedPrompt, history, currentSessionFile, "repl", undefined, onToken);
+              if (!streamedAny) {
+                process.stdout.write(colors.boldCyan("agent ❯ ") + result);
+              }
+              process.stdout.write("\n\n");
+            } catch (e: any) {
+              process.stdout.write(`\n${colors.red(`Error: ${e.message}`)}\n\n`);
+            } finally {
+              isRunning = false;
+            }
+          } else {
+            console.log(colors.red(`Unknown command: ${cmd}  (type /help)\n`));
+          }
+          break;
+        }
       }
       ask();
       continue;

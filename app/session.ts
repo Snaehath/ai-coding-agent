@@ -91,6 +91,13 @@ export function deleteSessionById(sessionId: string): boolean {
   return false;
 }
 
+// Overwrite session file with new message array
+export function rewriteSessionFile(sessionFilePath: string, messages: any[]) {
+  ensureSessionDir();
+  const content = messages.map((m) => JSON.stringify(m)).join("\n") + "\n";
+  fs.writeFileSync(sessionFilePath, content, { encoding: "utf-8" });
+}
+
 // Trim conversation context to max limit
 export function trimContextMessages(messages: any[]): any[] {
   if (messages.length <= MAX_CONTEXT_MESSAGES) return messages;
