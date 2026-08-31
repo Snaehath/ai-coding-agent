@@ -237,7 +237,7 @@ async function runServerMode() {
           result: {
             protocolVersion: "2026-08-30",
             agentInfo: { name: process.env.AGENT_NAME ?? "AI Coding Agent", version: "1.0.0" },
-            capabilities: { tools: ["Read", "Write", "Bash"] },
+            capabilities: { tools: ["Read", "Write", "Bash", "WebSearch"] },
           },
         });
         break;

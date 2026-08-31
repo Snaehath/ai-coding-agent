@@ -8,6 +8,7 @@ import {
   trimContextMessages,
 } from "./session.ts";
 import { loadAllSkills, matchSkill } from "./skills.ts";
+import { performWebSearch, formatSearchResults } from "./web-search.ts";
 
 // Constants
 const PLACEHOLDER_RE =
@@ -74,7 +75,7 @@ export function parseToolArguments(raw: any): Record<string, any> {
 // Extract embedded tool calls from text
 export function extractEmbeddedToolCall(
   content: string,
-  knownTools: Set<string> = new Set(["Read", "Write", "Bash"]),
+  knownTools: Set<string> = new Set(["Read", "Write", "Bash", "WebSearch"]),
 ): any | null {
   const candidates: string[] = [];
 
@@ -186,6 +187,23 @@ export const BUILTIN_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "WebSearch",
+      description: "Search the live web for real-time information, documentation, news, or external references.",
+      parameters: {
+        type: "object",
+        required: ["query"],
+        properties: {
+          query: {
+            type: "string",
+            description: "The search query to look up on the web.",
+          },
+        },
+      },
+    },
+  },
 ];
 
 // Load MCP clients
@@ -278,7 +296,9 @@ export async function runAgentMode(
     messages.unshift({
       role: "system",
       content: `You are ${agentName}, an autonomous coding assistant.
-Use tools to answer requests (Read, Write, Bash). When a file path is mentioned in the user's request, immediately invoke the Read tool to inspect it — never ask the user to provide file paths or contents.${mcpList}${skillList}${activeSkillPrompt}
+Use tools to answer requests (Read, Write, Bash, WebSearch).
+- When a file path is mentioned, immediately invoke Read — never ask the user to provide file paths or contents.
+- When asked about real-time events, latest library documentation, current packages, or external web queries, use WebSearch to find up-to-date facts.${mcpList}${skillList}${activeSkillPrompt}
 When a tool returns a result, summarize and present the findings clearly to the user. Do not call the same tool repeatedly.
 Never output raw JSON tool calls in your final response.`,
     });
@@ -342,9 +362,10 @@ Never output raw JSON tool calls in your final response.`,
         const isMcp = toolName.startsWith("mcp__");
 
         const summary =
-          toolName === "Read"  ? `📖 Reading  ${filePath}`
-          : toolName === "Write" ? `📝 Writing  ${filePath}`
-          : isMcp               ? `🔌 MCP: ${toolName.replace(/^mcp__[^_]+__/, "")}`
+          toolName === "Read"      ? `📖 Reading  ${filePath}`
+          : toolName === "Write"   ? `📝 Writing  ${filePath}`
+          : toolName === "WebSearch" ? `🌐 Searching: "${args.query ?? ""}"`
+          : isMcp                   ? `🔌 MCP: ${toolName.replace(/^mcp__[^_]+__/, "")}`
           : `⚡ Running: ${args.command ?? ""}`;
 
         // Notify tool call
@@ -391,6 +412,16 @@ Never output raw JSON tool calls in your final response.`,
             });
             actionLog.push(`Ran: ${command}`);
           } catch (e: any) { result = `Error: ${e.message}`; }
+
+        } else if (toolName === "WebSearch") {
+          const query = String(args.query ?? "").trim();
+          try {
+            const searchResults = await performWebSearch(query);
+            result = formatSearchResults(query, searchResults);
+            actionLog.push(`Web search: "${query}"`);
+          } catch (e: any) {
+            result = `Error executing web search: ${e.message}`;
+          }
 
         } else if (isMcp) {
           const [, serverId, ...rest] = toolName.split("__");
