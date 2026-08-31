@@ -198,6 +198,25 @@ function listAllSessions(): any[] {
   return files;
 }
 
+function deleteSessionById(sessionId: string): boolean {
+  const targetFile = getSessionFileByID(sessionId);
+  if (targetFile && fs.existsSync(targetFile)) {
+    fs.unlinkSync(targetFile);
+    return true;
+  }
+  return false;
+}
+const MAX_CONTEXT_MESSAGES = 20;
+
+function trimContextMessages(messages: any[]): any[] {
+  if (messages.length <= MAX_CONTEXT_MESSAGES) return messages;
+
+  const systemMsg = messages.find((m) => m.role === "system");
+
+  const recentMessages = messages.slice(-(MAX_CONTEXT_MESSAGES - 1));
+
+  return systemMsg ? [systemMsg, ...recentMessages] : recentMessages;
+}
 // runs the agent mode: maintains a session and processes prompts with tool calls.
 async function runAgentMode(
   prompt: string,
@@ -235,9 +254,11 @@ async function runAgentMode(
 
   while (true) {
     // Call Claude API with available tools
+    const contextMessages = trimContextMessages(messages);
+
     const response = await client.chat.completions.create({
       model: model ?? "anthropic/claude-haiku-4.5",
-      messages: messages as any,
+      messages: contextMessages,
       tools: [
         {
           type: "function",
@@ -563,6 +584,25 @@ async function runServerMode() {
       } catch (error: any) {
         // error handling
       }
+    } else if (request.method === "session/delete") {
+      const targetId = request.params?.sessionId;
+      const success = deleteSessionById(targetId);
+
+      if (success) {
+        const response: JsonRpcResponse = {
+          jsonrpc: "2.0",
+          id: request.id ?? null,
+          result: { deleted: true, sessionId: targetId },
+        };
+        process.stdout.write(JSON.stringify(response) + "\n");
+      } else {
+        const errorResponse: JsonRpcResponse = {
+          jsonrpc: "2.0",
+          id: request.id ?? null,
+          error: { code: -32001, message: `Session not found: ${targetId}` },
+        };
+        process.stdout.write(JSON.stringify(errorResponse) + "\n");
+      }
     }
 
     // Handle initialize request
@@ -641,6 +681,37 @@ async function main() {
 
   const resumeIdx = args.findIndex((arg) => arg === "--resume" || arg === "-r");
   const resumeId = resumeIdx !== -1 ? args[resumeIdx + 1] : undefined;
+
+  // 1. Handle --list / -l
+  if (args.includes("--list") || args.includes("-l")) {
+    const sessions = listAllSessions();
+    if (sessions.length === 0) {
+      console.log("No saved sessions found in .agents/sessions/");
+      return;
+    }
+    console.log("Saved Sessions:");
+    console.log(
+      "----------------------------------------------------------------------",
+    );
+    for (const s of sessions) {
+      console.log(
+        `• ID: ${s.id} | Messages: ${s.messageCount} | Updated: ${s.updatedAt}`,
+      );
+    }
+    return;
+  }
+  // 2. Handle --delete <id>
+  const deleteIdx = args.findIndex((a) => a === "--delete");
+  if (deleteIdx !== -1 && args[deleteIdx + 1]) {
+    const targetId = args[deleteIdx + 1];
+    const success = deleteSessionById(targetId);
+    if (success) {
+      console.log(`✅ Session '${targetId}' deleted.`);
+    } else {
+      console.error(`❌ Session '${targetId}' not found.`);
+    }
+    return;
+  }
 
   const pIndex = args.indexOf("-p");
 
