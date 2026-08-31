@@ -292,6 +292,7 @@ export async function runAgentMode(
   sessionFilePath?: string,
   mode: ExecutionMode = "cli",
   notifyTool?: (toolName: string, summary: string) => void,
+  onToken?: (token: string) => void,
 ): Promise<string> {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) throw new Error("OPENROUTER_API_KEY is not set");
@@ -322,7 +323,7 @@ export async function runAgentMode(
     );
   }
 
-  const allToolNames = new Set(["Read", "Write", "Bash", ...allTools.map((t) => t.function.name)]);
+  const allToolNames = new Set(["Read", "Write", "Bash", "WebSearch", ...allTools.map((t) => t.function.name)]);
 
   // Notify skill activation in terminal
   if (activeSkill) {
@@ -368,18 +369,52 @@ Never output raw JSON tool calls in your final response.`,
 
   try {
     while (turns++ < MAX_TURNS) {
-      const response = await llm.chat.completions.create({
+      const stream = await llm.chat.completions.create({
         model,
         messages: trimContextMessages(messages),
         tools: allTools,
+        stream: true,
       });
 
-      const message = response.choices[0].message;
+      let fullContent = "";
+      const toolCallsMap = new Map<number, { id?: string; name: string; args: string }>();
 
-      // Extract tool calls
-      let toolCalls: any[] = message.tool_calls ?? [];
-      if (toolCalls.length === 0 && message.content) {
-        const tc = extractEmbeddedToolCall(message.content, allToolNames);
+      for await (const chunk of stream) {
+        const delta = chunk.choices[0]?.delta;
+        if (!delta) continue;
+
+        if (delta.content) {
+          fullContent += delta.content;
+          if (onToken) {
+            onToken(delta.content);
+          }
+        }
+
+        if (delta.tool_calls) {
+          for (const tc of delta.tool_calls) {
+            const idx = tc.index ?? 0;
+            const existing = toolCallsMap.get(idx) ?? { id: tc.id, name: "", args: "" };
+            if (tc.id) existing.id = tc.id;
+            if (tc.function?.name) existing.name += tc.function.name;
+            if (tc.function?.arguments) existing.args += tc.function.arguments;
+            toolCallsMap.set(idx, existing);
+          }
+        }
+      }
+
+      // Convert tool calls map to array
+      let toolCalls = Array.from(toolCallsMap.values()).map((tc) => ({
+        id: tc.id || "call_" + Math.random().toString(36).slice(2, 9),
+        type: "function",
+        function: {
+          name: tc.name,
+          arguments: tc.args,
+        },
+      }));
+
+      // Fallback extraction for local models that output tool JSON into content
+      if (toolCalls.length === 0 && fullContent) {
+        const tc = extractEmbeddedToolCall(fullContent, allToolNames);
         if (tc) {
           toolCalls = [tc];
         }
@@ -387,7 +422,7 @@ Never output raw JSON tool calls in your final response.`,
 
       // Final response check
       if (toolCalls.length === 0) {
-        const cleaned = cleanAssistantContent(message.content ?? "");
+        const cleaned = cleanAssistantContent(fullContent);
         const finalContent =
           cleaned ||
           (actionLog.length > 0
@@ -402,7 +437,7 @@ Never output raw JSON tool calls in your final response.`,
       // Record assistant turn in history
       const assistantMsg = {
         role: "assistant",
-        content: message.content ? cleanAssistantContent(message.content) : null,
+        content: fullContent ? cleanAssistantContent(fullContent) : null,
         tool_calls: toolCalls,
       };
       messages.push(assistantMsg as any);

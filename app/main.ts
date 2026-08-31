@@ -95,22 +95,72 @@ async function runReplMode(options: { isContinue?: boolean; resumeId?: string })
   }
 
   const sessionId = () => path.basename(currentSessionFile, ".jsonl");
+  const currentModel = () => process.env.MODEL ?? "anthropic/claude-haiku-4.5";
 
   // Welcome banner
   console.log(
     "\n" + colors.boldCyan("╔═══════════════════════════════════════════════════════════╗") +
-    "\n" + colors.boldCyan("║") + "           🤖 " + colors.bold("AI Coding Agent  (Interactive REPL)") + "           " + colors.boldCyan("║") +
+    "\n" + colors.boldCyan("║") + "           🤖 " + colors.bold("AI Coding Agent  (Interactive TUI)") + "            " + colors.boldCyan("║") +
     "\n" + colors.boldCyan("╚═══════════════════════════════════════════════════════════╝"),
   );
-  console.log(colors.dim("  Type ") + colors.boldYellow("/help") + colors.dim(" for commands · ") + colors.boldYellow("/exit") + colors.dim(" to quit"));
-  console.log(colors.dim(`  Session: `) + colors.green(sessionId()) + colors.dim(` · ${history.length} messages loaded\n`));
+  console.log(colors.dim("  Type ") + colors.boldYellow("/help") + colors.dim(" for commands · ") + colors.boldYellow('"""') + colors.dim(" for multi-line · ") + colors.boldYellow("/exit") + colors.dim(" to quit"));
+  console.log(colors.dim("  Model: ") + colors.cyan(currentModel()) + colors.dim(" · Session: ") + colors.green(sessionId()) + colors.dim(` (${history.length} msgs)\n`));
 
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  const ask = () => process.stdout.write(colors.boldGreen("you > "));
+  let isRunning = false;
+  let multiLineBuffer: string[] = [];
+  let isMultiLineMode = false;
+
+  const ask = () => {
+    if (isMultiLineMode) {
+      process.stdout.write(colors.boldYellow("... ❯ "));
+    } else {
+      process.stdout.write(colors.boldGreen("you ❯ "));
+    }
+  };
+
+  // Graceful SIGINT handling
+  process.on("SIGINT", () => {
+    if (isRunning) {
+      process.stdout.write(colors.yellow("\n⚠️ Generation interrupted.\n"));
+      isRunning = false;
+      ask();
+    } else {
+      process.stdout.write(colors.dim("\nGoodbye! 👋\n"));
+      process.exit(0);
+    }
+  });
+
   ask();
 
-  for await (const line of rl) {
-    const input = line.trim();
+  for await (const rawLine of rl) {
+    const trimmed = rawLine.trim();
+
+    // Multi-line mode handling
+    if (!isMultiLineMode && (trimmed === '"""' || trimmed === "'''")) {
+      isMultiLineMode = true;
+      multiLineBuffer = [];
+      console.log(colors.dim("  (Multi-line mode active. Type '\"\"\"' to finish and submit)"));
+      ask();
+      continue;
+    }
+
+    if (isMultiLineMode) {
+      if (trimmed === '"""' || trimmed === "'''" || trimmed === "/end") {
+        isMultiLineMode = false;
+        const fullPrompt = multiLineBuffer.join("\n").trim();
+        multiLineBuffer = [];
+        if (!fullPrompt) { ask(); continue; }
+        // Process accumulated multi-line prompt below
+        rawLine; // placeholder
+      } else {
+        multiLineBuffer.push(rawLine);
+        ask();
+        continue;
+      }
+    }
+
+    const input = (isMultiLineMode ? "" : multiLineBuffer.length > 0 ? multiLineBuffer.join("\n") : rawLine).trim();
     if (!input) { ask(); continue; }
 
     // Slash command handling
@@ -128,6 +178,9 @@ async function runReplMode(options: { isContinue?: boolean; resumeId?: string })
           console.log(
             "\n" + colors.bold("Slash commands:") +
             `\n  ${colors.boldYellow("/help")}             Show this menu` +
+            `\n  ${colors.boldYellow("/model [name]")}     View or switch active LLM model` +
+            `\n  ${colors.boldYellow("/history")}          View recent conversation history` +
+            `\n  ${colors.boldYellow("/paste")}            Start multi-line paste mode` +
             `\n  ${colors.boldYellow("/skills")}           List available skills` +
             `\n  ${colors.boldYellow("/permissions")}      List active permission policies` +
             `\n  ${colors.boldYellow("/clear")} | ${colors.boldYellow("/new")}     Start a fresh session` +
@@ -135,6 +188,40 @@ async function runReplMode(options: { isContinue?: boolean; resumeId?: string })
             `\n  ${colors.boldYellow("/resume <id>")}    Resume an existing session` +
             `\n  ${colors.boldYellow("/exit")} | ${colors.boldYellow("/quit")}     Exit\n`,
           );
+          break;
+
+        case "/model": {
+          const newModel = rest[0];
+          if (newModel) {
+            process.env.MODEL = newModel;
+            console.log(colors.green(`✨ Active model changed to: ${newModel}\n`));
+          } else {
+            console.log(`\nActive Model: ${colors.boldCyan(currentModel())}\nUsage: ${colors.yellow("/model <model-name>")}\n`);
+          }
+          break;
+        }
+
+        case "/history": {
+          if (history.length === 0) {
+            console.log(colors.gray("No messages in current session.\n"));
+          } else {
+            console.log("\n" + colors.bold(`Session History (${sessionId()}):`));
+            console.log(colors.gray("─".repeat(68)));
+            for (const m of history.slice(-6)) {
+              if (m.role === "system") continue;
+              const roleTag = m.role === "user" ? colors.boldGreen("user:") : colors.boldCyan("agent:");
+              const text = typeof m.content === "string" ? m.content.slice(0, 100) : "[tool calls]";
+              console.log(`${roleTag} ${text}`);
+            }
+            console.log();
+          }
+          break;
+        }
+
+        case "/paste":
+          isMultiLineMode = true;
+          multiLineBuffer = [];
+          console.log(colors.dim("  (Multi-line paste mode active. Type '\"\"\"' or '/end' to submit)"));
           break;
 
         case "/permissions": {
@@ -214,13 +301,29 @@ async function runReplMode(options: { isContinue?: boolean; resumeId?: string })
       continue;
     }
 
-    // Run prompt in agent
+    // Run prompt in agent with live streaming
     try {
-      process.stdout.write(colors.boldCyan("agent > "));
-      const result = await runAgentMode(input, history, currentSessionFile, "repl");
-      process.stdout.write(`\n${result}\n\n`);
+      isRunning = true;
+      let streamedAny = false;
+      const onToken = (token: string) => {
+        if (!streamedAny) {
+          process.stdout.write(colors.boldCyan("agent ❯ "));
+          streamedAny = true;
+        }
+        process.stdout.write(token);
+      };
+
+      const result = await runAgentMode(input, history, currentSessionFile, "repl", undefined, onToken);
+
+      // If tokens weren't streamed directly (e.g. tool actions only), print the final result
+      if (!streamedAny) {
+        process.stdout.write(colors.boldCyan("agent ❯ ") + result);
+      }
+      process.stdout.write("\n\n");
     } catch (e: any) {
       process.stdout.write(`\n${colors.red(`Error: ${e.message}`)}\n\n`);
+    } finally {
+      isRunning = false;
     }
     ask();
   }
