@@ -10,6 +10,7 @@ import {
   loadSessionMessages,
 } from "./session.ts";
 import { loadAllSkills } from "./skills.ts";
+import { loadPermissionConfig } from "./permissions.ts";
 
 // ANSI terminal colors
 export const colors = {
@@ -128,12 +129,27 @@ async function runReplMode(options: { isContinue?: boolean; resumeId?: string })
             "\n" + colors.bold("Slash commands:") +
             `\n  ${colors.boldYellow("/help")}             Show this menu` +
             `\n  ${colors.boldYellow("/skills")}           List available skills` +
+            `\n  ${colors.boldYellow("/permissions")}      List active permission policies` +
             `\n  ${colors.boldYellow("/clear")} | ${colors.boldYellow("/new")}     Start a fresh session` +
             `\n  ${colors.boldYellow("/sessions")} | ${colors.boldYellow("/list")} List saved sessions` +
             `\n  ${colors.boldYellow("/resume <id>")}    Resume an existing session` +
             `\n  ${colors.boldYellow("/exit")} | ${colors.boldYellow("/quit")}     Exit\n`,
           );
           break;
+
+        case "/permissions": {
+          const permConfig = loadPermissionConfig();
+          console.log("\n" + colors.bold("Active Permission Policies:"));
+          console.log(colors.gray("─".repeat(68)));
+          console.log(`Default Action: ${colors.boldGreen(permConfig.defaultAction.toUpperCase())}\n`);
+          for (const r of permConfig.rules) {
+            const actionColor = r.action === "deny" ? colors.red : r.action === "ask" ? colors.yellow : colors.green;
+            const pat = r.pattern ? ` [pattern: ${r.pattern}]` : "";
+            console.log(`• [${actionColor(r.action.toUpperCase())}] ${colors.bold(r.tool)}${pat}\n  ${colors.gray(r.description ?? "No description")}`);
+          }
+          console.log();
+          break;
+        }
 
         case "/skills": {
           const skills = loadAllSkills();
@@ -307,6 +323,18 @@ async function main() {
   const isContinue = args.includes("--continue") || args.includes("-c");
   const resumeIdx = args.findIndex((a) => a === "--resume" || a === "-r");
   const resumeId = resumeIdx !== -1 ? args[resumeIdx + 1] : undefined;
+
+  // --permissions
+  if (args.includes("--permissions")) {
+    const permConfig = loadPermissionConfig();
+    console.log("Active Permission Policies:\n" + "─".repeat(68));
+    console.log(`Default Action: ${permConfig.defaultAction.toUpperCase()}\n`);
+    for (const r of permConfig.rules) {
+      const pat = r.pattern ? ` [pattern: ${r.pattern}]` : "";
+      console.log(`• [${r.action.toUpperCase()}] ${r.tool}${pat}\n  ${r.description ?? "No description"}`);
+    }
+    return;
+  }
 
   // --skills
   if (args.includes("--skills")) {

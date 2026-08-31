@@ -9,6 +9,12 @@ import {
 } from "./session.ts";
 import { loadAllSkills, matchSkill } from "./skills.ts";
 import { performWebSearch, formatSearchResults } from "./web-search.ts";
+import {
+  loadPermissionConfig,
+  evaluatePermission,
+  promptUserPermission,
+  type PermissionAction,
+} from "./permissions.ts";
 
 // Constants
 const PLACEHOLDER_RE =
@@ -18,6 +24,18 @@ const TOOL_CALL_OBJ_RE =
   /\{[^{}]*"(?:name|function|tool)"\s*:\s*"[^"]+"[^{}]*\}/g;
 
 const MCP_CONFIG_PATH = path.resolve(process.cwd(), ".agents", "mcp.json");
+
+// ANSI color helpers
+const colors = {
+  dim:        (s: string) => `\x1b[2m${s}\x1b[0m`,
+  bold:       (s: string) => `\x1b[1m${s}\x1b[0m`,
+  boldCyan:   (s: string) => `\x1b[1;36m${s}\x1b[0m`,
+  boldMagenta:(s: string) => `\x1b[1;35m${s}\x1b[0m`,
+  boldYellow: (s: string) => `\x1b[1;33m${s}\x1b[0m`,
+  gray:       (s: string) => `\x1b[90m${s}\x1b[0m`,
+  red:        (s: string) => `\x1b[31m${s}\x1b[0m`,
+  green:      (s: string) => `\x1b[32m${s}\x1b[0m`,
+};
 
 // Types
 export type ExecutionMode = "cli" | "server" | "repl";
@@ -119,6 +137,41 @@ export function extractEmbeddedToolCall(
         arguments: typeof toolArgs === "string" ? toolArgs : JSON.stringify(toolArgs),
       },
     };
+  }
+
+  // Check for tuple format fallback: "ToolName", { "arg": "value" ... }
+  const tupleRegex = /["']?([A-Za-z0-9_]+)["']?\s*,\s*(\{[\s\S]*)/;
+  const tupleMatch = content.match(tupleRegex);
+  if (tupleMatch && knownTools.has(tupleMatch[1])) {
+    const toolName = tupleMatch[1];
+    let rawArgs = tupleMatch[2].trim();
+    if (!rawArgs.endsWith("}")) rawArgs += "}";
+    try {
+      const parsedArgs = JSON.parse(rawArgs);
+      return {
+        id: "call_" + Math.random().toString(36).slice(2, 9),
+        type: "function",
+        function: {
+          name: toolName,
+          arguments: JSON.stringify(parsedArgs),
+        },
+      };
+    } catch {
+      try {
+        const fixed = rawArgs
+          .replace(/([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, '$1"$2":')
+          .replace(/:\s*([A-Za-z0-9_./\\]+)(?=[,}\s])/g, ': "$1"');
+        const parsedArgs = JSON.parse(fixed);
+        return {
+          id: "call_" + Math.random().toString(36).slice(2, 9),
+          type: "function",
+          function: {
+            name: toolName,
+            arguments: JSON.stringify(parsedArgs),
+          },
+        };
+      } catch { /* fall through */ }
+    }
   }
 
   return null;
@@ -273,11 +326,8 @@ export async function runAgentMode(
 
   // Notify skill activation in terminal
   if (activeSkill) {
-    const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
-    const boldMagenta = (s: string) => `\x1b[1;35m${s}\x1b[0m`;
-    const gray = (s: string) => `\x1b[90m${s}\x1b[0m`;
     process.stdout.write(
-      `  ${dim("↳")} ${boldMagenta(`[Skill: ${activeSkill.name}]`)} ${gray(activeSkill.description.slice(0, 70))}...\n`,
+      `  ${colors.dim("↳")} ${colors.boldMagenta(`[Skill: ${activeSkill.name}]`)} ${colors.gray(activeSkill.description.slice(0, 70))}...\n`,
     );
   }
 
@@ -311,6 +361,10 @@ Never output raw JSON tool calls in your final response.`,
   const actionLog: string[] = [];
   const MAX_TURNS = 8;
   let turns = 0;
+
+  // Load permission configuration and runtime session cache
+  const permConfig = loadPermissionConfig();
+  const runtimePermCache = new Map<string, PermissionAction>();
 
   try {
     while (turns++ < MAX_TURNS) {
@@ -368,20 +422,41 @@ Never output raw JSON tool calls in your final response.`,
           : isMcp                   ? `🔌 MCP: ${toolName.replace(/^mcp__[^_]+__/, "")}`
           : `⚡ Running: ${args.command ?? ""}`;
 
-        // Notify tool call
-        if (notifyTool) {
-          notifyTool(toolName, summary);
-        } else {
-          const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
-          const boldCyan = (s: string) => `\x1b[1;36m${s}\x1b[0m`;
-          const gray = (s: string) => `\x1b[90m${s}\x1b[0m`;
-          process.stdout.write(`  ${dim("↳")} ${boldCyan(`[${toolName}]`)} ${gray(summary)}\n`);
+        // Target resource for permission evaluation
+        const target =
+          toolName === "Bash" ? String(args.command ?? "")
+          : toolName === "WebSearch" ? String(args.query ?? "")
+          : isMcp ? toolName.split("__").slice(2).join("__")
+          : filePath;
+
+        // Evaluate permissions
+        const { action, rule } = evaluatePermission(toolName, target, permConfig, runtimePermCache);
+        let result: string | null = null;
+
+        if (action === "deny") {
+          process.stdout.write(`  ${colors.dim("↳")} ${colors.red(`[⛔ Denied by policy]`)} ${toolName}: ${target} (${rule?.description ?? "Restricted"})\n`);
+          result = `Error: Permission denied by policy for ${toolName}: "${target}". ${rule?.description ? `Reason: ${rule.description}` : ""}`;
+        } else if (action === "ask") {
+          const allowed = await promptUserPermission(toolName, summary, target, runtimePermCache);
+          if (!allowed) {
+            process.stdout.write(`  ${colors.dim("↳")} ${colors.boldYellow(`[Declined by user]`)} ${toolName}\n`);
+            result = `Error: User denied permission to execute ${toolName} on "${target}".`;
+          }
         }
 
-        let result: string;
+        // Notify tool call if allowed
+        if (!result) {
+          if (notifyTool) {
+            notifyTool(toolName, summary);
+          } else {
+            process.stdout.write(`  ${colors.dim("↳")} ${colors.boldCyan(`[${toolName}]`)} ${colors.gray(summary)}\n`);
+          }
+        }
 
-        // Tool handlers
-        if (toolName === "Read") {
+        // Tool handlers (only execute if not blocked by permission)
+        if (result !== null) {
+          // Already rejected
+        } else if (toolName === "Read") {
           try {
             result = fs.existsSync(filePath)
               ? fs.readFileSync(filePath, "utf-8")
