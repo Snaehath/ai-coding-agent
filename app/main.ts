@@ -2,8 +2,28 @@ import OpenAI from "openai";
 import fs from "node:fs";
 import path from "node:path";
 import * as readline from "node:readline";
+import { exec } from "node:child_process";
 
-// resolve file path for local system  /home/user -> /home/user
+// ANSI terminal styling helper
+const colors = {
+  reset: "\x1b[0m",
+  bold: (str: string) => `\x1b[1m${str}\x1b[0m`,
+  dim: (str: string) => `\x1b[2m${str}\x1b[0m`,
+  italic: (str: string) => `\x1b[3m${str}\x1b[0m`,
+  cyan: (str: string) => `\x1b[36m${str}\x1b[0m`,
+  green: (str: string) => `\x1b[32m${str}\x1b[0m`,
+  yellow: (str: string) => `\x1b[33m${str}\x1b[0m`,
+  blue: (str: string) => `\x1b[34m${str}\x1b[0m`,
+  magenta: (str: string) => `\x1b[35m${str}\x1b[0m`,
+  gray: (str: string) => `\x1b[90m${str}\x1b[0m`,
+  red: (str: string) => `\x1b[31m${str}\x1b[0m`,
+  boldCyan: (str: string) => `\x1b[1;36m${str}\x1b[0m`,
+  boldGreen: (str: string) => `\x1b[1;32m${str}\x1b[0m`,
+  boldYellow: (str: string) => `\x1b[1;33m${str}\x1b[0m`,
+  boldMagenta: (str: string) => `\x1b[1;35m${str}\x1b[0m`,
+};
+
+// resolve file path for local system
 function resolveFilePath(filePath: string): string {
   if (!filePath) return "";
   if (fs.existsSync(filePath)) return filePath;
@@ -64,7 +84,7 @@ function cleanAssistantContent(text: string): string {
   return clean.trim();
 }
 
-// JSON-RPC 2.0 request structure
+// JSON-RPC 2.0 types
 type JsonRpcRequest = {
   jsonrpc: "2.0";
   id?: number | string | null;
@@ -72,7 +92,6 @@ type JsonRpcRequest = {
   params?: any;
 };
 
-// JSON-RPC 2.0 response structure
 type JsonRpcResponse = {
   jsonrpc: "2.0";
   id: number | string | null;
@@ -84,35 +103,8 @@ type JsonRpcResponse = {
   };
 };
 
-// Runs the CLI mode: processes a single prompt and returns the response.
-// Uses the shared agentic loop to handle tool calls until completion.
-async function runCliMode(
-  prompt: string,
-  options: { isContinue?: boolean; resumeId?: string },
-) {
-  let sessionFile: string;
-  let history: any[] = [];
-
-  if (options.resumeId) {
-    const target = getSessionFileByID(options.resumeId);
-    if (!target) {
-      process.stderr.write(`Error: Session not found: ${options.resumeId}\n`);
-      process.exit(1);
-    }
-    sessionFile = target;
-    history = loadSessionMessages(target);
-  } else if (options.isContinue) {
-    const latest = getLatestSessionFile();
-    sessionFile = latest ?? createNewSessionPath();
-    history = latest ? loadSessionMessages(latest) : [];
-  } else {
-    sessionFile = createNewSessionPath();
-  }
-  const result = await runAgentMode(prompt, history, sessionFile);
-  process.stdout.write(result + "\n");
-}
-
 const SESSION_DIR = path.resolve(process.cwd(), ".agents", "sessions");
+const MAX_CONTEXT_MESSAGES = 20;
 
 function ensureSessionDir() {
   if (!fs.existsSync(SESSION_DIR)) {
@@ -142,7 +134,7 @@ function getLatestSessionFile(): string | null {
       path: path.join(SESSION_DIR, f),
       mtime: fs.statSync(path.join(SESSION_DIR, f)).mtime.getTime(),
     }))
-    .sort((a, b) => a.mtime - b.mtime);
+    .sort((a, b) => b.mtime - a.mtime);
   return files.length > 0 ? files[0].path : null;
 }
 
@@ -187,7 +179,7 @@ function listAllSessions(): any[] {
         createdAt: new Date(stat.birthtimeMs || stat.mtimeMs).toISOString(),
         updatedAt: new Date(stat.mtimeMs).toISOString(),
         messageCount: messages.length,
-        title: lastUserMessage?.content?.slice(0, 40) ?? "Empty Session",
+        title: lastUserMessage?.content?.slice(0, 45) ?? "Empty Session",
       };
     })
     .sort(
@@ -206,22 +198,22 @@ function deleteSessionById(sessionId: string): boolean {
   }
   return false;
 }
-const MAX_CONTEXT_MESSAGES = 20;
 
 function trimContextMessages(messages: any[]): any[] {
   if (messages.length <= MAX_CONTEXT_MESSAGES) return messages;
-
   const systemMsg = messages.find((m) => m.role === "system");
-
   const recentMessages = messages.slice(-(MAX_CONTEXT_MESSAGES - 1));
-
   return systemMsg ? [systemMsg, ...recentMessages] : recentMessages;
 }
-// runs the agent mode: maintains a session and processes prompts with tool calls.
+
+export type ExecutionMode = "cli" | "server" | "repl";
+
+// Core Agent Loop: handles tool calls and LLM reasoning
 async function runAgentMode(
   prompt: string,
   messages: any[],
   sessionFilePath?: string,
+  mode: ExecutionMode = "cli",
 ): Promise<string> {
   const apiKey = process.env.OPENROUTER_API_KEY;
   const baseURL =
@@ -238,11 +230,12 @@ async function runAgentMode(
   });
 
   // Ensure system prompt is present
+  const agentName = process.env.AGENT_NAME ?? "an expert coding assistant";
   if (messages.length === 0 || messages[0].role !== "system") {
     messages.unshift({
       role: "system",
       content:
-        "You are Claude Code, an expert coding assistant. Give direct, concise, and clean answers in Markdown. Do NOT include raw JSON tool calls in your final user response.",
+        `You are ${agentName}. Give direct, concise, and clean answers in Markdown. Do NOT include raw JSON tool calls in your final user response.`,
     });
   }
 
@@ -253,7 +246,6 @@ async function runAgentMode(
   }
 
   while (true) {
-    // Call Claude API with available tools
     const contextMessages = trimContextMessages(messages);
 
     const response = await client.chat.completions.create({
@@ -377,7 +369,6 @@ async function runAgentMode(
     // 3. Process each tool call
     for (const toolCall of toolCalls) {
       const args = parseToolArguments(toolCall.function?.arguments);
-
       const cleanArgs = { ...args };
 
       if (cleanArgs.content) {
@@ -392,22 +383,27 @@ async function runAgentMode(
             ? `📝 Writing ${cleanArgs.file_path ?? "file"}`
             : `⚡ Running: ${cleanArgs.command ?? ""}`;
 
-      // Emit JSON-RPC notification about the tool call
-      const notification = {
-        jsonrpc: "2.0",
-        method: "session/tool_call",
-        params: {
-          tool: toolName,
-          summary: summary,
-          args: cleanArgs,
-        },
-      };
-      process.stdout.write(JSON.stringify(notification) + "\n");
+      if (mode === "server") {
+        const notification = {
+          jsonrpc: "2.0",
+          method: "session/tool_call",
+          params: {
+            tool: toolName,
+            summary: summary,
+            args: cleanArgs,
+          },
+        };
+        process.stdout.write(JSON.stringify(notification) + "\n");
+      } else {
+        // REPL or CLI terminal presentation
+        process.stdout.write(
+          `  ${colors.dim("↳")} ${colors.boldCyan(`[Tool: ${toolName}]`)} ${colors.gray(summary)}\n`,
+        );
+      }
 
-      // Execute the tool call and add result to conversation
+      // Execute tool call
       if (toolCall.function?.name === "Read") {
         const filePath = resolveFilePath(args.file_path);
-
         let fileContent: string;
         try {
           fileContent = fs.readFileSync(filePath, "utf-8");
@@ -433,14 +429,12 @@ async function runAgentMode(
       if (toolCall.function?.name === "Write") {
         const filePath = resolveFilePath(args.file_path);
         const content = args.content ?? "";
-
         let writeResult: string;
         try {
           const dir = path.dirname(filePath);
           if (!fs.existsSync(dir)) {
             fs.mkdirSync(dir, { recursive: true });
           }
-
           fs.writeFileSync(filePath, content, "utf-8");
           writeResult = `File ${filePath} has been written successfully.`;
         } catch (error: any) {
@@ -467,16 +461,13 @@ async function runAgentMode(
         let bashResult: string;
         try {
           bashResult = await new Promise<string>((resolve) => {
-            require("child_process").exec(
-              command,
-              (error: any, stdout: string, stderr: string) => {
-                if (error) {
-                  resolve(`Error: ${stderr || error.message}`);
-                } else {
-                  resolve(stdout);
-                }
-              },
-            );
+            exec(command, (error: any, stdout: string, stderr: string) => {
+              if (error) {
+                resolve(`Error: ${stderr || error.message}`);
+              } else {
+                resolve(stdout);
+              }
+            });
           });
         } catch (error: any) {
           bashResult = `Error executing bash: ${error.message}`;
@@ -498,9 +489,183 @@ async function runAgentMode(
       }
     }
   }
+
+  return "";
 }
 
-// runs the server mode: maintains a session and processes prompts with tool calls.
+// Runs single-prompt CLI mode
+async function runCliMode(
+  prompt: string,
+  options: { isContinue?: boolean; resumeId?: string },
+) {
+  let sessionFile: string;
+  let history: any[] = [];
+
+  if (options.resumeId) {
+    const target = getSessionFileByID(options.resumeId);
+    if (!target) {
+      process.stderr.write(`Error: Session not found: ${options.resumeId}\n`);
+      process.exit(1);
+    }
+    sessionFile = target;
+    history = loadSessionMessages(target);
+  } else if (options.isContinue) {
+    const latest = getLatestSessionFile();
+    sessionFile = latest ?? createNewSessionPath();
+    history = latest ? loadSessionMessages(latest) : [];
+  } else {
+    sessionFile = createNewSessionPath();
+  }
+
+  const result = await runAgentMode(prompt, history, sessionFile, "cli");
+  process.stdout.write(result + "\n");
+}
+
+// Runs interactive terminal REPL chat mode
+async function runReplMode(options: { isContinue?: boolean; resumeId?: string }) {
+  let currentSessionFile: string;
+  let history: any[] = [];
+
+  if (options.resumeId) {
+    const target = getSessionFileByID(options.resumeId);
+    if (!target) {
+      console.log(colors.red(`❌ Session not found: ${options.resumeId}`));
+      currentSessionFile = createNewSessionPath();
+    } else {
+      currentSessionFile = target;
+      history = loadSessionMessages(target);
+    }
+  } else if (options.isContinue) {
+    const latest = getLatestSessionFile();
+    if (latest) {
+      currentSessionFile = latest;
+      history = loadSessionMessages(latest);
+    } else {
+      currentSessionFile = createNewSessionPath();
+    }
+  } else {
+    currentSessionFile = createNewSessionPath();
+  }
+
+  const getSessionId = () => path.basename(currentSessionFile, ".jsonl");
+
+  console.log("\n" + colors.boldCyan("╔═══════════════════════════════════════════════════════════╗"));
+  console.log(colors.boldCyan("║") + "            🤖 " + colors.bold("AI Coding Agent (Interactive REPL)") + "           " + colors.boldCyan("║"));
+  console.log(colors.boldCyan("╚═══════════════════════════════════════════════════════════╝"));
+  console.log(colors.dim("Type ") + colors.boldYellow("/help") + colors.dim(" for slash commands, or ") + colors.boldYellow("/exit") + colors.dim(" to quit."));
+  console.log(colors.dim(`Session: `) + colors.green(getSessionId()) + colors.dim(` (${history.length} messages loaded)\n`));
+
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    prompt: colors.boldGreen("you > "),
+  });
+
+  rl.prompt();
+
+  for await (const line of rl) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      rl.prompt();
+      continue;
+    }
+
+    // Slash command handling
+    if (trimmed.startsWith("/")) {
+      const [cmd, ...cmdArgs] = trimmed.split(" ");
+
+      if (cmd === "/exit" || cmd === "/quit") {
+        console.log(colors.dim("Goodbye! 👋\n"));
+        rl.close();
+        process.exit(0);
+      }
+
+      if (cmd === "/help") {
+        console.log("\n" + colors.bold("Available Slash Commands:"));
+        console.log(`  ${colors.boldYellow("/help")}            Show this help menu`);
+        console.log(`  ${colors.boldYellow("/clear")} or ${colors.boldYellow("/new")}   Start a fresh session with new context`);
+        console.log(`  ${colors.boldYellow("/sessions")} or ${colors.boldYellow("/list")} List all saved sessions`);
+        console.log(`  ${colors.boldYellow("/resume <id>")}   Switch to and resume an existing session`);
+        console.log(`  ${colors.boldYellow("/exit")} or ${colors.boldYellow("/quit")}   Exit the chat REPL\n`);
+        rl.prompt();
+        continue;
+      }
+
+      if (cmd === "/clear" || cmd === "/new") {
+        currentSessionFile = createNewSessionPath();
+        history = [];
+        console.log(colors.green(`✨ Started new session: ${getSessionId()}\n`));
+        rl.prompt();
+        continue;
+      }
+
+      if (cmd === "/sessions" || cmd === "/list") {
+        const sessions = listAllSessions();
+        if (sessions.length === 0) {
+          console.log(colors.gray("No saved sessions found.\n"));
+        } else {
+          console.log("\n" + colors.bold("Saved Sessions:"));
+          console.log(colors.gray("----------------------------------------------------------------------"));
+          for (const s of sessions) {
+            const isCurrent = s.id === getSessionId();
+            const prefix = isCurrent ? colors.boldGreen("▶ ") : "• ";
+            console.log(
+              `${prefix}ID: ${colors.cyan(s.id)} | Title: ${colors.italic(s.title)} | Msg: ${s.messageCount} | ${colors.gray(s.updatedAt)}`,
+            );
+          }
+          console.log();
+        }
+        rl.prompt();
+        continue;
+      }
+
+      if (cmd === "/resume") {
+        const targetId = cmdArgs[0];
+        if (!targetId) {
+          console.log(colors.red("Usage: /resume <sessionId>\n"));
+          rl.prompt();
+          continue;
+        }
+        const targetFile = getSessionFileByID(targetId);
+        if (!targetFile) {
+          console.log(colors.red(`❌ Session not found: ${targetId}\n`));
+        } else {
+          currentSessionFile = targetFile;
+          history = loadSessionMessages(targetFile);
+          console.log(colors.green(`🔄 Resumed session: ${targetId} (${history.length} messages)\n`));
+        }
+        rl.prompt();
+        continue;
+      }
+
+      console.log(colors.red(`Unknown command: ${cmd}. Type /help for available commands.\n`));
+      rl.prompt();
+      continue;
+    }
+
+    // Agent prompt execution
+    try {
+      process.stdout.write(colors.boldCyan("agent > "));
+      const result = await runAgentMode(
+        trimmed,
+        history,
+        currentSessionFile,
+        "repl",
+      );
+      if (result) {
+        process.stdout.write(`\n${result}\n\n`);
+      } else {
+        process.stdout.write("\n");
+      }
+    } catch (error: any) {
+      process.stdout.write(`\n${colors.red(`Error: ${error.message}`)}\n\n`);
+    }
+
+    rl.prompt();
+  }
+}
+
+// Runs JSON-RPC ACP server mode over stdio
 async function runServerMode() {
   let currentSessionFile = createNewSessionPath();
   let sessionMessages: any[] = [];
@@ -509,7 +674,6 @@ async function runServerMode() {
     terminal: false,
   });
 
-  // Process incoming JSON-RPC requests
   for await (const line of rl) {
     if (!line.trim()) continue;
 
@@ -529,7 +693,30 @@ async function runServerMode() {
       continue;
     }
 
-    if (request.method === "session/list") {
+    if (request.method === "initialize") {
+      const response: JsonRpcResponse = {
+        jsonrpc: "2.0",
+        id: request.id ?? null,
+        result: {
+          protocolVersion: "2026-08-30",
+          agentInfo: {
+            name: process.env.AGENT_NAME ?? "AI Coding Agent",
+            version: "1.0.0",
+          },
+          capabilities: {
+            tools: ["Read", "Write", "Bash"],
+          },
+        },
+      };
+      process.stdout.write(JSON.stringify(response) + "\n");
+    } else if (request.method === "ping") {
+      const response: JsonRpcResponse = {
+        jsonrpc: "2.0",
+        id: request.id ?? null,
+        result: "pong",
+      };
+      process.stdout.write(JSON.stringify(response) + "\n");
+    } else if (request.method === "session/list") {
       const sessions = listAllSessions();
       const response: JsonRpcResponse = {
         jsonrpc: "2.0",
@@ -574,6 +761,7 @@ async function runServerMode() {
           userPrompt,
           sessionMessages,
           currentSessionFile,
+          "server",
         );
         const response: JsonRpcResponse = {
           jsonrpc: "2.0",
@@ -582,12 +770,19 @@ async function runServerMode() {
         };
         process.stdout.write(JSON.stringify(response) + "\n");
       } catch (error: any) {
-        // error handling
+        const errorResponse: JsonRpcResponse = {
+          jsonrpc: "2.0",
+          id: request.id ?? null,
+          error: {
+            code: -32000,
+            message: error.message ?? "Internal error",
+          },
+        };
+        process.stdout.write(JSON.stringify(errorResponse) + "\n");
       }
     } else if (request.method === "session/delete") {
       const targetId = request.params?.sessionId;
       const success = deleteSessionById(targetId);
-
       if (success) {
         const response: JsonRpcResponse = {
           jsonrpc: "2.0",
@@ -603,64 +798,7 @@ async function runServerMode() {
         };
         process.stdout.write(JSON.stringify(errorResponse) + "\n");
       }
-    }
-
-    // Handle initialize request
-    else if (request.method === "initialize") {
-      const response: JsonRpcResponse = {
-        jsonrpc: "2.0",
-        id: request.id ?? null,
-        result: {
-          protocolVersion: "2026-08-30",
-          agentInfo: {
-            name: "Claude Code",
-            version: "1.0.0",
-          },
-          capabilities: {
-            tools: ["Read", "Write", "Bash"],
-          },
-        },
-      };
-      process.stdout.write(JSON.stringify(response) + "\n");
-    }
-    // Handle ping request
-    else if (request.method === "ping") {
-      const response: JsonRpcResponse = {
-        jsonrpc: "2.0",
-        id: request.id ?? null,
-        result: "pong",
-      };
-      process.stdout.write(JSON.stringify(response) + "\n");
-    }
-    // Handle session prompt request
-    else if (request.method === "session/prompt") {
-      const userPrompt = request.params?.prompt ?? "";
-
-      try {
-        const result = await runAgentMode(userPrompt, sessionMessages);
-
-        const response: JsonRpcResponse = {
-          jsonrpc: "2.0",
-          id: request.id ?? null,
-          result: {
-            content: result,
-          },
-        };
-        process.stdout.write(JSON.stringify(response) + "\n");
-      } catch (error: any) {
-        const errorResponse: JsonRpcResponse = {
-          jsonrpc: "2.0",
-          id: request.id ?? null,
-          error: {
-            code: -32000,
-            message: error.message ?? "Internal error",
-          },
-        };
-        process.stdout.write(JSON.stringify(errorResponse) + "\n");
-      }
-    }
-    // Handle unknown method
-    else {
+    } else {
       const errorResponse: JsonRpcResponse = {
         jsonrpc: "2.0",
         id: request.id ?? null,
@@ -674,7 +812,7 @@ async function runServerMode() {
   }
 }
 
-// main entry point of the application
+// Main CLI router
 async function main() {
   const args = process.argv.slice(2);
   const isContinue = args.includes("--continue") || args.includes("-c");
@@ -695,11 +833,12 @@ async function main() {
     );
     for (const s of sessions) {
       console.log(
-        `• ID: ${s.id} | Messages: ${s.messageCount} | Updated: ${s.updatedAt}`,
+        `• ID: ${s.id} | Title: ${s.title} | Messages: ${s.messageCount} | Updated: ${s.updatedAt}`,
       );
     }
     return;
   }
+
   // 2. Handle --delete <id>
   const deleteIdx = args.findIndex((a) => a === "--delete");
   if (deleteIdx !== -1 && args[deleteIdx + 1]) {
@@ -713,10 +852,20 @@ async function main() {
     return;
   }
 
+  // 3. Handle single-prompt mode (-p "...")
   const pIndex = args.indexOf("-p");
-
   if (pIndex !== -1 && args[pIndex + 1]) {
     await runCliMode(args[pIndex + 1], { isContinue, resumeId });
+    return;
+  }
+
+  // 4. Handle Server vs Interactive REPL mode
+  const isExplicitServer = args.includes("--server") || args.includes("-s");
+  const isInteractive =
+    process.stdin.isTTY && !isExplicitServer && !process.env.CI;
+
+  if (isInteractive || args.includes("--interactive") || args.includes("-i")) {
+    await runReplMode({ isContinue, resumeId });
   } else {
     await runServerMode();
   }
