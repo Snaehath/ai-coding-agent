@@ -3,10 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import * as readline from "node:readline";
 
-/**
- * Normalizes file paths so that leading slashes (/app/main.ts)
- * or relative paths correctly resolve within the workspace.
- */
+// resolve file path for local system  /home/user -> /home/user
 function resolveFilePath(filePath: string): string {
   if (!filePath) return "";
   if (fs.existsSync(filePath)) return filePath;
@@ -15,10 +12,8 @@ function resolveFilePath(filePath: string): string {
   return path.resolve(process.cwd(), relativePath);
 }
 
-/**
- * Safely parses tool arguments regardless of whether they are already an object,
- * valid JSON, loose JSON, or single-quote strings.
- */
+// safely parses tool arguments regardless of whether they are already an object,
+// valid JSON, loose JSON, or single-quote strings.
 function parseToolArguments(raw: any): Record<string, any> {
   if (typeof raw === "object" && raw !== null) {
     return raw;
@@ -45,9 +40,7 @@ function parseToolArguments(raw: any): Record<string, any> {
   return {};
 }
 
-/**
- * Strips raw JSON tool call artifacts, Qwen internal XML tokens, and formats the final output cleanly.
- */
+// clean assistant content from tool call artifacts, Qwen internal XML tokens, and formats the final output cleanly.
 function cleanAssistantContent(text: string): string {
   if (!text) return "";
   let clean = text.trim();
@@ -91,21 +84,27 @@ type JsonRpcResponse = {
   };
 };
 
-/**
- * Runs the CLI mode: processes a single prompt and returns the response.
- * Uses the shared agentic loop to handle tool calls until completion.
- */
-async function runCliMode(prompt: string, isContinue: boolean) {
+// Runs the CLI mode: processes a single prompt and returns the response.
+// Uses the shared agentic loop to handle tool calls until completion.
+async function runCliMode(
+  prompt: string,
+  options: { isContinue?: boolean; resumeId?: string },
+) {
   let sessionFile: string;
   let history: any[] = [];
-  if (isContinue) {
-    const latest = getLatestSessionFile();
-    if (latest) {
-      sessionFile = latest;
-      history = loadSessionMessages(latest);
-    } else {
-      sessionFile = createNewSessionPath();
+
+  if (options.resumeId) {
+    const target = getSessionFileByID(options.resumeId);
+    if (!target) {
+      process.stderr.write(`Error: Session not found: ${options.resumeId}\n`);
+      process.exit(1);
     }
+    sessionFile = target;
+    history = loadSessionMessages(target);
+  } else if (options.isContinue) {
+    const latest = getLatestSessionFile();
+    sessionFile = latest ?? createNewSessionPath();
+    history = latest ? loadSessionMessages(latest) : [];
   } else {
     sessionFile = createNewSessionPath();
   }
@@ -163,6 +162,13 @@ function loadSessionMessages(sessionFilePath: string): any[] {
     }
   }
   return messages;
+}
+
+function getSessionFileByID(sessionId: string): string {
+  ensureSessionDir();
+  const baseName = sessionId.replace(/\.jsonl$/, "");
+  const fullPath = path.join(SESSION_DIR, `${baseName}.jsonl`);
+  return fs.existsSync(fullPath) ? fullPath : "";
 }
 
 /**
@@ -278,18 +284,15 @@ async function runAgentMode(
     let toolCalls: any[] = message.tool_calls ?? [];
 
     if (toolCalls.length === 0 && message.content) {
-      try {
-        // Strip ```json and ``` markdown code fences if present
-        let cleanText = message.content.trim();
-        if (cleanText.startsWith("```")) {
-          cleanText = cleanText
-            .replace(/^```(?:json)?\n?/, "")
-            .replace(/\n?```$/, "")
-            .trim();
-        }
+      const match =
+        message.content.match(
+          /```(?:json)?\s*(\{[\s\S]*?"name"[\s\S]*?\})\s*```/,
+        ) ||
+        message.content.match(/(\{[\s\S]*?"name"\s*:\s*"[^"]+"[\s\S]*?\})/);
 
-        if (cleanText.startsWith("{") && cleanText.endsWith("}")) {
-          const parsed = JSON.parse(cleanText);
+      if (match) {
+        try {
+          const parsed = JSON.parse(match[1]);
           if (
             parsed.name &&
             parsed.name !== "<none>" &&
@@ -312,9 +315,9 @@ async function runAgentMode(
               },
             ];
           }
+        } catch {
+          // Not a JSON tool call, treat as normal text content
         }
-      } catch {
-        // Not a JSON tool call, treat as normal text content
       }
     }
 
@@ -560,9 +563,14 @@ async function runServerMode() {
 async function main() {
   const args = process.argv.slice(2);
   const isContinue = args.includes("--continue") || args.includes("-c");
+
+  const resumeIdx = args.findIndex((arg) => arg === "--resume" || arg === "-r");
+  const resumeId = resumeIdx !== -1 ? args[resumeIdx + 1] : undefined;
+
   const pIndex = args.indexOf("-p");
+
   if (pIndex !== -1 && args[pIndex + 1]) {
-    await runCliMode(args[pIndex + 1], isContinue);
+    await runCliMode(args[pIndex + 1], { isContinue, resumeId });
   } else {
     await runServerMode();
   }
