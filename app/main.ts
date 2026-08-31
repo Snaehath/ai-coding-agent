@@ -9,6 +9,7 @@ import {
   listAllSessions,
   loadSessionMessages,
 } from "./session.ts";
+import { loadAllSkills } from "./skills.ts";
 
 // ANSI terminal colors
 export const colors = {
@@ -126,12 +127,29 @@ async function runReplMode(options: { isContinue?: boolean; resumeId?: string })
           console.log(
             "\n" + colors.bold("Slash commands:") +
             `\n  ${colors.boldYellow("/help")}             Show this menu` +
+            `\n  ${colors.boldYellow("/skills")}           List available skills` +
             `\n  ${colors.boldYellow("/clear")} | ${colors.boldYellow("/new")}     Start a fresh session` +
             `\n  ${colors.boldYellow("/sessions")} | ${colors.boldYellow("/list")} List saved sessions` +
             `\n  ${colors.boldYellow("/resume <id>")}    Resume an existing session` +
             `\n  ${colors.boldYellow("/exit")} | ${colors.boldYellow("/quit")}     Exit\n`,
           );
           break;
+
+        case "/skills": {
+          const skills = loadAllSkills();
+          if (skills.length === 0) {
+            console.log(colors.gray("No skills found in .agents/skills/\n"));
+          } else {
+            console.log("\n" + colors.bold("Available Skills:"));
+            console.log(colors.gray("─".repeat(68)));
+            for (const s of skills) {
+              const toolInfo = s.tools ? colors.dim(` [tools: ${s.tools.join(", ")}]`) : "";
+              console.log(`• ${colors.boldCyan(s.name)}${toolInfo}\n  ${colors.gray(s.description)}`);
+            }
+            console.log();
+          }
+          break;
+        }
 
         case "/clear":
         case "/new":
@@ -289,6 +307,18 @@ async function main() {
   const isContinue = args.includes("--continue") || args.includes("-c");
   const resumeIdx = args.findIndex((a) => a === "--resume" || a === "-r");
   const resumeId = resumeIdx !== -1 ? args[resumeIdx + 1] : undefined;
+
+  // --skills
+  if (args.includes("--skills")) {
+    const skills = loadAllSkills();
+    if (skills.length === 0) { console.log("No skills found in .agents/skills/"); return; }
+    console.log("Available Skills:\n" + "─".repeat(68));
+    for (const s of skills) {
+      const toolInfo = s.tools ? ` [tools: ${s.tools.join(", ")}]` : "";
+      console.log(`• ${s.name}${toolInfo}\n  ${s.description}`);
+    }
+    return;
+  }
 
   // --list
   if (args.includes("--list") || args.includes("-l")) {

@@ -7,6 +7,7 @@ import {
   appendSessionMessage,
   trimContextMessages,
 } from "./session.ts";
+import { loadAllSkills, matchSkill } from "./skills.ts";
 
 // Constants
 const PLACEHOLDER_RE =
@@ -235,18 +236,49 @@ export async function runAgentMode(
   const mcpClients = await loadMcpClients();
   const mcpTools: McpToolSchema[] = [];
   for (const c of mcpClients.values()) mcpTools.push(...c.getTools());
-  const allTools = [...BUILTIN_TOOLS, ...mcpTools];
-  const allToolNames = new Set(["Read", "Write", "Bash", ...mcpTools.map((t) => t.function.name)]);
+  let allTools = [...BUILTIN_TOOLS, ...mcpTools];
+
+  // Discover and match skills
+  const skills = loadAllSkills();
+  const activeSkill = matchSkill(prompt, skills);
+
+  // Enforce tool restrictions if active skill specifies allowed tools
+  if (activeSkill?.tools && activeSkill.tools.length > 0) {
+    const allowedSet = new Set(activeSkill.tools);
+    allTools = allTools.filter((t) =>
+      allowedSet.has(t.function.name) ||
+      allowedSet.has(t.function.name.replace(/^mcp__[^_]+__/, "")),
+    );
+  }
+
+  const allToolNames = new Set(["Read", "Write", "Bash", ...allTools.map((t) => t.function.name)]);
+
+  // Notify skill activation in terminal
+  if (activeSkill) {
+    const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
+    const boldMagenta = (s: string) => `\x1b[1;35m${s}\x1b[0m`;
+    const gray = (s: string) => `\x1b[90m${s}\x1b[0m`;
+    process.stdout.write(
+      `  ${dim("↳")} ${boldMagenta(`[Skill: ${activeSkill.name}]`)} ${gray(activeSkill.description.slice(0, 70))}...\n`,
+    );
+  }
 
   // System prompt
   if (messages.length === 0 || messages[0].role !== "system") {
     const mcpList = mcpTools.length > 0
       ? `\nMCP tools available: ${mcpTools.map((t) => t.function.name.replace(/^mcp__[^_]+__/, "")).join(", ")}.`
       : "";
+    const skillList = skills.length > 0
+      ? `\nAvailable skills: ${skills.map((s) => s.name).join(", ")}.`
+      : "";
+    const activeSkillPrompt = activeSkill
+      ? `\n\n--- ACTIVE SKILL: ${activeSkill.name} ---\n${activeSkill.instructions}\n----------------------------------`
+      : "";
+
     messages.unshift({
       role: "system",
       content: `You are ${agentName}, an autonomous coding assistant.
-Use tools when needed to answer requests (Read, Write, Bash).${mcpList}
+Use tools to answer requests (Read, Write, Bash). When a file path is mentioned in the user's request, immediately invoke the Read tool to inspect it — never ask the user to provide file paths or contents.${mcpList}${skillList}${activeSkillPrompt}
 When a tool returns a result, summarize and present the findings clearly to the user. Do not call the same tool repeatedly.
 Never output raw JSON tool calls in your final response.`,
     });
