@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "ai-coding-agent",
+      "name": "@codecrafters/claude-code",
       "dependencies": {
         "openai": "^6.16.0",
       },

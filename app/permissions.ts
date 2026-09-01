@@ -95,33 +95,21 @@ export function matchesPattern(target: string, pattern: string): boolean {
   return false;
 }
 
-// Load permissions configuration from file with global install dir fallback
+// Load permissions configuration from file
 export function loadPermissionConfig(): PermissionConfig {
-  const globalPath = path.resolve(
-    import.meta.dir,
-    "..",
-    ".agents",
-    "permissions.json",
-  );
-  const targetPath = fs.existsSync(PERMISSIONS_CONFIG_PATH)
-    ? PERMISSIONS_CONFIG_PATH
-    : fs.existsSync(globalPath)
-      ? globalPath
-      : null;
-
-  if (!targetPath) {
+  if (!fs.existsSync(PERMISSIONS_CONFIG_PATH)) {
     return DEFAULT_PERMISSIONS;
   }
 
   try {
-    const raw = fs.readFileSync(targetPath, "utf-8");
+    const raw = fs.readFileSync(PERMISSIONS_CONFIG_PATH, "utf-8");
     const parsed = JSON.parse(raw);
     return {
       defaultAction: parsed.defaultAction ?? "allow",
       rules: parsed.rules ?? DEFAULT_PERMISSIONS.rules,
     };
   } catch (e: any) {
-    process.stderr.write(`[Permissions] Failed to load ${targetPath}: ${e.message}\n`);
+    process.stderr.write(`[Permissions] Failed to parse permissions.json: ${e.message}\n`);
     return DEFAULT_PERMISSIONS;
   }
 }

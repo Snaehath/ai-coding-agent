@@ -45,25 +45,13 @@ const colors = {
   boldGreen: (s: string) => `\x1b[1;32m${s}\x1b[0m`,
 };
 
-// Load hooks from config file with global install dir fallback
+// Load hooks from config file
 export function loadHooksConfig(): HooksConfig {
-  const globalPath = path.resolve(
-    import.meta.dir,
-    "..",
-    ".agents",
-    "hooks.json",
-  );
-  const targetPath = fs.existsSync(HOOKS_CONFIG_PATH)
-    ? HOOKS_CONFIG_PATH
-    : fs.existsSync(globalPath)
-      ? globalPath
-      : null;
-
-  if (!targetPath) {
+  if (!fs.existsSync(HOOKS_CONFIG_PATH)) {
     return { enabled: true, hooks: [] };
   }
   try {
-    const raw = fs.readFileSync(targetPath, "utf-8");
+    const raw = fs.readFileSync(HOOKS_CONFIG_PATH, "utf-8");
     return JSON.parse(raw);
   } catch {
     return { enabled: true, hooks: [] };

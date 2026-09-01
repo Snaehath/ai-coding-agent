@@ -23,7 +23,7 @@ import {
   promptSelectModel,
 } from "./models.ts";
 import {
-  StreamingMarkdownFormatter,
+  createMarkdownStreamer,
   renderTerminalMarkdown,
 } from "./markdown.ts";
 
@@ -320,16 +320,14 @@ export async function runReplMode(options: {
 
           try {
             isRunning = true;
-            const mdFormatter = new StreamingMarkdownFormatter();
             let streamedAny = false;
-            const onToken = (token: string) => {
+            const mdStreamer = createMarkdownStreamer((text) => {
               if (!streamedAny) {
                 process.stdout.write(colors.boldCyan("agent ❯ "));
                 streamedAny = true;
               }
-              const formatted = mdFormatter.feed(token);
-              if (formatted) process.stdout.write(formatted);
-            };
+              process.stdout.write(text);
+            });
 
             const result = await runAgentMode(
               userPrompt,
@@ -337,17 +335,16 @@ export async function runReplMode(options: {
               currentSessionFile,
               "repl",
               undefined,
-              onToken,
+              (t) => mdStreamer.write(t),
               [imgPath],
             );
+
+            mdStreamer.flush();
 
             if (!streamedAny) {
               process.stdout.write(
                 colors.boldCyan("agent ❯ ") + renderTerminalMarkdown(result),
               );
-            } else {
-              const trailing = mdFormatter.flush();
-              if (trailing) process.stdout.write(trailing);
             }
             process.stdout.write("\n\n");
           } catch (e: any) {
@@ -527,16 +524,14 @@ export async function runReplMode(options: {
 
             try {
               isRunning = true;
-              const mdFormatter = new StreamingMarkdownFormatter();
               let streamedAny = false;
-              const onToken = (token: string) => {
+              const mdStreamer = createMarkdownStreamer((text) => {
                 if (!streamedAny) {
                   process.stdout.write(colors.boldCyan("agent ❯ "));
                   streamedAny = true;
                 }
-                const formatted = mdFormatter.feed(token);
-                if (formatted) process.stdout.write(formatted);
-              };
+                process.stdout.write(text);
+              });
 
               const result = await runAgentMode(
                 expandedPrompt,
@@ -544,15 +539,15 @@ export async function runReplMode(options: {
                 currentSessionFile,
                 "repl",
                 undefined,
-                onToken,
+                (t) => mdStreamer.write(t),
               );
+
+              mdStreamer.flush();
+
               if (!streamedAny) {
                 process.stdout.write(
                   colors.boldCyan("agent ❯ ") + renderTerminalMarkdown(result),
                 );
-              } else {
-                const trailing = mdFormatter.flush();
-                if (trailing) process.stdout.write(trailing);
               }
               process.stdout.write("\n\n");
             } catch (e: any) {
@@ -572,19 +567,17 @@ export async function runReplMode(options: {
       continue;
     }
 
-    // Run prompt in agent with live streaming & markdown formatting
+    // Run prompt in agent with live streaming
     try {
       isRunning = true;
-      const mdFormatter = new StreamingMarkdownFormatter();
       let streamedAny = false;
-      const onToken = (token: string) => {
+      const mdStreamer = createMarkdownStreamer((text) => {
         if (!streamedAny) {
           process.stdout.write(colors.boldCyan("agent ❯ "));
           streamedAny = true;
         }
-        const formatted = mdFormatter.feed(token);
-        if (formatted) process.stdout.write(formatted);
-      };
+        process.stdout.write(text);
+      });
 
       const result = await runAgentMode(
         input,
@@ -592,16 +585,15 @@ export async function runReplMode(options: {
         currentSessionFile,
         "repl",
         undefined,
-        onToken,
+        (t) => mdStreamer.write(t),
       );
+
+      mdStreamer.flush();
 
       if (!streamedAny) {
         process.stdout.write(
           colors.boldCyan("agent ❯ ") + renderTerminalMarkdown(result),
         );
-      } else {
-        const trailing = mdFormatter.flush();
-        if (trailing) process.stdout.write(trailing);
       }
       process.stdout.write("\n\n");
     } catch (e: any) {

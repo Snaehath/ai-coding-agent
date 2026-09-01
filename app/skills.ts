@@ -71,19 +71,13 @@ export function parseSkillMarkdown(content: string, filePath: string): Skill | n
   };
 }
 
-// Recursively load all SKILL.md files from project workspace and global install dir
+// Recursively load all SKILL.md files
 export function loadAllSkills(dir: string = SKILLS_DIR): Skill[] {
-  const globalDir = path.resolve(
-    import.meta.dir,
-    "..",
-    ".agents",
-    "skills",
-  );
+  if (!fs.existsSync(dir)) return [];
 
-  const skillsMap = new Map<string, Skill>();
+  const skills: Skill[] = [];
 
   function scan(currentDir: string) {
-    if (!fs.existsSync(currentDir)) return;
     const entries = fs.readdirSync(currentDir, { withFileTypes: true });
     for (const entry of entries) {
       const fullPath = path.join(currentDir, entry.name);
@@ -93,9 +87,7 @@ export function loadAllSkills(dir: string = SKILLS_DIR): Skill[] {
         try {
           const content = fs.readFileSync(fullPath, "utf-8");
           const parsed = parseSkillMarkdown(content, fullPath);
-          if (parsed && !skillsMap.has(parsed.name)) {
-            skillsMap.set(parsed.name, parsed);
-          }
+          if (parsed) skills.push(parsed);
         } catch (e: any) {
           process.stderr.write(`[Skills] Failed to load ${fullPath}: ${e.message}\n`);
         }
@@ -103,14 +95,8 @@ export function loadAllSkills(dir: string = SKILLS_DIR): Skill[] {
     }
   }
 
-  // Scan project workspace skills first
   scan(dir);
-  // Scan global built-in skills
-  if (path.resolve(dir) !== path.resolve(globalDir)) {
-    scan(globalDir);
-  }
-
-  return Array.from(skillsMap.values());
+  return skills;
 }
 
 // Find matching skill based on user prompt keywords and description intent

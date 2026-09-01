@@ -1,12 +1,7 @@
 {
-  "name": "ai-coding-agent",
-  "version": "1.0.0",
-  "description": "Autonomous local AI coding agent CLI with multimodal vision, tool execution, LSP, and telemetry",
+  "name": "@codecrafters/claude-code",
+  "description": "Build your own Claude Code challenge, from CodeCrafters",
   "type": "module",
-  "bin": {
-    "ai-agent": "./app/main.ts",
-    "ai-coding-agent": "./app/main.ts"
-  },
   "scripts": {
     "dev": "bun run app/main.ts"
   },
