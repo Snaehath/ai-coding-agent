@@ -98,6 +98,30 @@ export function parseToolArguments(raw: any): Record<string, any> {
   return {};
 }
 
+// Match tool name against known tools (case-insensitive, snake_case, PascalCase, MCP prefix)
+function matchKnownTool(name: string, knownTools: Set<string>): string | null {
+  if (!name) return null;
+  if (knownTools.has(name)) return name;
+
+  const clean = name.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+  // Priority: check if it matches an MCP tool suffix (e.g. get_time, gettime -> mcp__tools__get_time)
+  for (const k of knownTools) {
+    if (k.startsWith("mcp__")) {
+      const suffix = k.replace(/^mcp__[^_]+__/, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+      if (suffix === clean) return k;
+    }
+  }
+
+  // General normalized match
+  for (const k of knownTools) {
+    const kClean = k.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (kClean === clean) return k;
+  }
+
+  return null;
+}
+
 // Extract embedded tool calls from text
 export function extractEmbeddedToolCall(
   content: string,
@@ -143,12 +167,20 @@ export function extractEmbeddedToolCall(
 
     if (!parsed || typeof parsed !== "object") continue;
 
-    const toolName: string =
+    const rawToolName: string =
       parsed.name ?? parsed.function ?? parsed.tool ?? "";
-    const toolArgs =
-      parsed.arguments ?? parsed.parameters ?? parsed.args ?? null;
+    const toolName = matchKnownTool(rawToolName, knownTools);
+    if (!toolName) continue;
 
-    if (!knownTools.has(toolName) || !toolArgs) continue;
+    const toolArgs =
+      parsed.arguments ?? parsed.parameters ?? parsed.args ?? {};
+
+    // Ignore fake tool calls containing final answer/response
+    if (toolArgs && typeof toolArgs === "object") {
+      if (toolArgs.response || toolArgs.answer || toolArgs.output || toolArgs.result) {
+        continue;
+      }
+    }
 
     return {
       id: "call_" + Math.random().toString(36).slice(2, 9),
@@ -164,26 +196,18 @@ export function extractEmbeddedToolCall(
   // Check for tuple format fallback: "ToolName", { "arg": "value" ... }
   const tupleRegex = /["']?([A-Za-z0-9_]+)["']?\s*,\s*(\{[\s\S]*)/;
   const tupleMatch = content.match(tupleRegex);
-  if (tupleMatch && knownTools.has(tupleMatch[1])) {
-    const toolName = tupleMatch[1];
-    let rawArgs = tupleMatch[2].trim();
-    if (!rawArgs.endsWith("}")) rawArgs += "}";
-    try {
-      const parsedArgs = JSON.parse(rawArgs);
-      return {
-        id: "call_" + Math.random().toString(36).slice(2, 9),
-        type: "function",
-        function: {
-          name: toolName,
-          arguments: JSON.stringify(parsedArgs),
-        },
-      };
-    } catch {
+  if (tupleMatch) {
+    const toolName = matchKnownTool(tupleMatch[1], knownTools);
+    if (toolName) {
+      let rawArgs = tupleMatch[2].trim();
+      if (!rawArgs.endsWith("}")) rawArgs += "}";
       try {
-        const fixed = rawArgs
-          .replace(/([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, '$1"$2":')
-          .replace(/:\s*([A-Za-z0-9_./\\]+)(?=[,}\s])/g, ': "$1"');
-        const parsedArgs = JSON.parse(fixed);
+        const parsedArgs = JSON.parse(rawArgs);
+        if (parsedArgs && typeof parsedArgs === "object") {
+          if (parsedArgs.response || parsedArgs.answer || parsedArgs.output || parsedArgs.result) {
+            return null;
+          }
+        }
         return {
           id: "call_" + Math.random().toString(36).slice(2, 9),
           type: "function",
@@ -193,7 +217,27 @@ export function extractEmbeddedToolCall(
           },
         };
       } catch {
-        /* fall through */
+        try {
+          const fixed = rawArgs
+            .replace(/([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, '$1"$2":')
+            .replace(/:\s*([A-Za-z0-9_./\\]+)(?=[,}\s])/g, ': "$1"');
+          const parsedArgs = JSON.parse(fixed);
+          if (parsedArgs && typeof parsedArgs === "object") {
+            if (parsedArgs.response || parsedArgs.answer || parsedArgs.output || parsedArgs.result) {
+              return null;
+            }
+          }
+          return {
+            id: "call_" + Math.random().toString(36).slice(2, 9),
+            type: "function",
+            function: {
+              name: toolName,
+              arguments: JSON.stringify(parsedArgs),
+            },
+          };
+        } catch {
+          /* fall through */
+        }
       }
     }
   }
@@ -205,11 +249,31 @@ export function extractEmbeddedToolCall(
 export function cleanAssistantContent(text: string): string {
   if (!text) return "";
   let clean = text.trim();
-  clean = clean.replace(/```(?:json)?\s*\{[\s\S]*?\}\s*```\s*/gi, "");
-  clean = clean.replace(TOOL_CALL_OBJ_RE, "");
+
+  // If model wrapped its final response in a JSON object: {"response": "..."} or {"name": "...", "arguments": {"response": "..."}}
+  try {
+    const parsed = JSON.parse(clean);
+    if (parsed && typeof parsed === "object") {
+      const inner = parsed.arguments ?? parsed;
+      const val = inner.response || inner.answer || inner.output || inner.result || inner.message;
+      if (val) return String(val);
+    }
+  } catch {
+    const respMatch = clean.match(/"(?:response|answer|output|result|message)"\s*:\s*"([^"]+)/i);
+    if (respMatch) {
+      return respMatch[1];
+    }
+  }
+
+  // Remove markdown codeblock JSON tool calls
+  clean = clean.replace(/```(?:json)?\s*\{[\s\S]*?"(?:name|function|tool)"[\s\S]*?\}\s*```/gi, "");
+  // Remove inline JSON tool call objects
+  clean = clean.replace(/\{[^{}]*"(?:name|function|tool)"\s*:\s*"[^"]+"[^{}]*\}/g, "");
+  // Remove XML tool tags
   clean = clean.replace(/<tool_response>[\s\S]*?<\/tool_response>/gi, "");
+  clean = clean.replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, "");
   clean = clean.replace(/<[^>]+>/g, "").trim();
-  clean = clean.replace(/^[\s,;.!}]+|[\s,;{}]+$/g, "").trim();
+
   if (
     !clean ||
     clean === "{}" ||
@@ -404,8 +468,8 @@ export async function runAgentMode(
 Use tools to answer requests (Read, Write, Bash, WebSearch).
 - When a file path is mentioned, immediately invoke Read — never ask the user to provide file paths or contents.
 - When asked about real-time events, latest library documentation, current packages, or external web queries, use WebSearch to find up-to-date facts.${mcpList}${skillList}${activeSkillPrompt}
-When a tool returns a result, summarize and present the findings clearly to the user. Do not call the same tool repeatedly.
-Never output raw JSON tool calls in your final response.`,
+- IMPORTANT: When a tool returns a result (e.g. current time, directory listing, file contents), immediately present that answer in natural language to the user. Do NOT call the same tool again.
+- Never output raw JSON tool calls in your final response.`,
     });
   }
 
@@ -444,7 +508,20 @@ Never output raw JSON tool calls in your final response.`,
         if (delta.content) {
           fullContent += delta.content;
           if (onToken) {
-            onToken(delta.content);
+            const trimmed = fullContent.trimStart();
+            const isJsonToolCall =
+              trimmed.startsWith("{") ||
+              trimmed.startsWith("```json") ||
+              trimmed.startsWith('"Read"') ||
+              trimmed.startsWith('"Write"') ||
+              trimmed.startsWith('"Bash"') ||
+              trimmed.startsWith('"WebSearch"') ||
+              trimmed.startsWith('"GetTime"') ||
+              trimmed.startsWith('"get_time"') ||
+              trimmed.startsWith('["');
+            if (!isJsonToolCall) {
+              onToken(delta.content);
+            }
           }
         }
 
@@ -508,9 +585,32 @@ Never output raw JSON tool calls in your final response.`,
       // Execute tool calls
       for (const tc of toolCalls) {
         const args = parseToolArguments(tc.function?.arguments);
-        const toolName: string = tc.function?.name ?? "Unknown";
+        let toolName: string = tc.function?.name ?? "Unknown";
         const filePath = resolveFilePath(args.file_path);
-        const isMcp = toolName.startsWith("mcp__");
+
+        // Resolve MCP tool by prefix or local name
+        let isMcp = toolName.startsWith("mcp__");
+        let mcpMatch: { serverId: string; localName: string } | null = null;
+        if (isMcp) {
+          const [, serverId, ...rest] = toolName.split("__");
+          mcpMatch = { serverId, localName: rest.join("__") };
+        } else {
+          for (const [sId, client] of mcpClients) {
+            for (const t of client.getTools()) {
+              const local = t.function.name.replace(/^mcp__[^_]+__/, "");
+              if (
+                local.toLowerCase() === toolName.toLowerCase() ||
+                t.function.name.toLowerCase() === toolName.toLowerCase()
+              ) {
+                mcpMatch = { serverId: sId, localName: local };
+                toolName = t.function.name;
+                isMcp = true;
+                break;
+              }
+            }
+            if (mcpMatch) break;
+          }
+        }
 
         const summary =
           toolName === "Read"
@@ -519,8 +619,8 @@ Never output raw JSON tool calls in your final response.`,
               ? `📝 Writing  ${filePath}`
               : toolName === "WebSearch"
                 ? `🌐 Searching: "${args.query ?? ""}"`
-                : isMcp
-                  ? `🔌 MCP: ${toolName.replace(/^mcp__[^_]+__/, "")}`
+                : isMcp && mcpMatch
+                  ? `🔌 MCP: ${mcpMatch.localName}`
                   : `⚡ Running: ${args.command ?? ""}`;
 
         // Target resource for permission evaluation
@@ -529,8 +629,8 @@ Never output raw JSON tool calls in your final response.`,
             ? String(args.command ?? "")
             : toolName === "WebSearch"
               ? String(args.query ?? "")
-              : isMcp
-                ? toolName.split("__").slice(2).join("__")
+              : isMcp && mcpMatch
+                ? mcpMatch.localName
                 : filePath;
 
         // Evaluate permissions
@@ -624,18 +724,16 @@ Never output raw JSON tool calls in your final response.`,
           } catch (e: any) {
             result = `Error executing web search: ${e.message}`;
           }
-        } else if (isMcp) {
-          const [, serverId, ...rest] = toolName.split("__");
-          const localName = rest.join("__");
-          const mcpClient = mcpClients.get(serverId);
+        } else if (isMcp && mcpMatch) {
+          const mcpClient = mcpClients.get(mcpMatch.serverId);
           if (!mcpClient) {
-            result = `Error: no MCP server with id "${serverId}"`;
+            result = `Error: no MCP server with id "${mcpMatch.serverId}"`;
           } else {
             try {
-              result = await mcpClient.callTool(localName, args);
-              actionLog.push(`MCP[${serverId}] ${localName}`);
+              result = await mcpClient.callTool(mcpMatch.localName, args);
+              actionLog.push(`MCP[${mcpMatch.serverId}] ${mcpMatch.localName}`);
             } catch (e: any) {
-              result = `Error calling ${localName}: ${e.message}`;
+              result = `Error calling ${mcpMatch.localName}: ${e.message}`;
             }
           }
         } else {

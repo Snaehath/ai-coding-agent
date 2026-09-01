@@ -103,9 +103,9 @@ export const REGISTERED_MODELS: ModelInfo[] = [
       "~3.8 GB VRAM for Q3_K_M weights; additional memory is required for the context/KV cache",
   },
   {
-    id: "PeterosStav/gemma3-tools:4b",
+    id: "PetrosStav/gemma3-tools:4b",
     name: "Gemma 3 Tools 4B",
-    creator: "PeterosStav / Google",
+    creator: "PetrosStav / Google",
     license: "Gemma Terms of use",
     aliases: [
       "gemma",
@@ -186,7 +186,6 @@ export const REGISTERED_MODELS: ModelInfo[] = [
       "lfm2.5",
       "lfm2.5:8b",
       "lfm2.5-8b",
-      "lfm",
       "liquid",
     ],
 
@@ -218,7 +217,7 @@ export const REGISTERED_MODELS: ModelInfo[] = [
 
     license: "Apache 2.0",
 
-    aliases: ["qwen", "qwen3", "qwen3.5", "qwen3.5:4b", "qwen:4b", "qwen35"],
+    aliases: ["qwen3.5", "qwen3", "qwen3.5:4b", "qwen:4b", "qwen35"],
 
     description:
       "Compact multimodal Qwen model combining vision, reasoning, coding, instruction following, and agentic capabilities with an efficient hybrid architecture.",
