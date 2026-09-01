@@ -150,7 +150,7 @@ export function evaluatePermission(
   return { action: config.defaultAction };
 }
 
-// Interactive confirmation prompt in terminal
+// Interactive confirmation prompt in terminal with Arrow key navigation & Enter selection
 export async function promptUserPermission(
   toolName: string,
   summary: string,
@@ -165,37 +165,156 @@ export async function promptUserPermission(
 
   const boldYellow = (s: string) => `\x1b[1;33m${s}\x1b[0m`;
   const boldCyan = (s: string) => `\x1b[1;36m${s}\x1b[0m`;
+  const boldGreen = (s: string) => `\x1b[1;32m${s}\x1b[0m`;
+  const boldRed = (s: string) => `\x1b[1;31m${s}\x1b[0m`;
   const gray = (s: string) => `\x1b[90m${s}\x1b[0m`;
   const bold = (s: string) => `\x1b[1m${s}\x1b[0m`;
+  const cyan = (s: string) => `\x1b[36m${s}\x1b[0m`;
 
+  const options = [
+    {
+      label: "Allow once",
+      hint: "Execute this action now",
+      color: boldGreen,
+      key: "y",
+      action: "allow_once",
+    },
+    {
+      label: "Allow always this session",
+      hint: `Auto-allow future "${target.slice(0, 30)}" operations`,
+      color: boldCyan,
+      key: "a",
+      action: "allow_always",
+    },
+    {
+      label: "Deny",
+      hint: "Cancel this operation",
+      color: boldRed,
+      key: "n",
+      action: "deny_once",
+    },
+    {
+      label: "Deny always this session",
+      hint: "Auto-deny in this session",
+      color: boldYellow,
+      key: "d",
+      action: "deny_always",
+    },
+  ];
+
+  let selectedIndex = 0;
+  let renderedLines = 0;
+
+  // Header
   process.stdout.write(
     `\n  ${boldYellow("⚠️  Permission Required")}\n` +
     `  Tool:   ${boldCyan(toolName)}\n` +
     `  Action: ${gray(summary)}\n` +
-    `  ${bold("Allow execution?")} [${bold("y")}es / ${bold("n")}o / ${bold("a")}lways / ne${bold("v")}er]: `,
+    `  ${gray("Use ↑/↓ arrows to select, Enter to confirm (or press y/a/n/d):")}\n`,
   );
 
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  function renderMenu() {
+    // Clear previous menu lines
+    if (renderedLines > 0) {
+      process.stdout.write(`\x1b[${renderedLines}A\r`);
+      for (let i = 0; i < renderedLines; i++) {
+        process.stdout.write("\x1b[2K\n");
+      }
+      process.stdout.write(`\x1b[${renderedLines}A\r`);
+    }
+
+    const lines: string[] = [];
+    for (let i = 0; i < options.length; i++) {
+      const opt = options[i];
+      const isSelected = i === selectedIndex;
+      if (isSelected) {
+        lines.push(`  ${cyan("❯")} ${opt.color(`● ${opt.label}`)} ${gray(`— ${opt.hint}`)}`);
+      } else {
+        lines.push(`    ${gray(`○ ${opt.label}`)} ${gray(`— ${opt.hint}`)}`);
+      }
+    }
+
+    process.stdout.write(lines.join("\n") + "\n");
+    renderedLines = lines.length;
+  }
+
+  renderMenu();
 
   return new Promise<boolean>((resolve) => {
-    rl.question("", (answer) => {
-      rl.close();
-      const choice = answer.trim().toLowerCase();
+    // Ensure raw mode is enabled
+    readline.emitKeypressEvents(process.stdin);
+    const wasRaw = process.stdin.isRaw;
+    if (process.stdin.setRawMode) {
+      process.stdin.setRawMode(true);
+    }
+    process.stdin.resume();
 
-      if (choice === "y" || choice === "yes") {
+    const cleanup = () => {
+      process.stdin.removeListener("keypress", onKeypress);
+      if (process.stdin.setRawMode) {
+        process.stdin.setRawMode(wasRaw ?? false);
+      }
+    };
+
+    const handleChoice = (action: string) => {
+      cleanup();
+      process.stdout.write("\n");
+
+      if (action === "allow_once") {
         resolve(true);
-      } else if (choice === "a" || choice === "always") {
-        // Cache permission for this session
+      } else if (action === "allow_always") {
         runtimeCache.set(`${toolName}:${target}`, "allow");
         resolve(true);
-      } else if (choice === "v" || choice === "never") {
-        // Cache denial for this session
+      } else if (action === "deny_always") {
         runtimeCache.set(`${toolName}:${target}`, "deny");
         resolve(false);
       } else {
-        // Default to deny on no or unrecognized answer
         resolve(false);
       }
-    });
+    };
+
+    const onKeypress = (_str: string, key: readline.Key) => {
+      if (!key) return;
+
+      // Handle Ctrl+C
+      if (key.ctrl && key.name === "c") {
+        cleanup();
+        process.stdout.write("\n");
+        process.exit(130);
+      }
+
+      // Arrow navigation
+      if (key.name === "up" || key.name === "k") {
+        selectedIndex = (selectedIndex - 1 + options.length) % options.length;
+        renderMenu();
+        return;
+      }
+
+      if (key.name === "down" || key.name === "j") {
+        selectedIndex = (selectedIndex + 1) % options.length;
+        renderMenu();
+        return;
+      }
+
+      // Enter or Space key selection
+      if (key.name === "return" || key.name === "enter" || key.name === "space") {
+        handleChoice(options[selectedIndex].action);
+        return;
+      }
+
+      // Keyboard shortcuts
+      const pressed = (key.name || _str || "").toLowerCase();
+      if (pressed === "y" || pressed === "1") {
+        handleChoice("allow_once");
+      } else if (pressed === "a" || pressed === "2") {
+        handleChoice("allow_always");
+      } else if (pressed === "n" || pressed === "q" || pressed === "3") {
+        handleChoice("deny_once");
+      } else if (pressed === "d" || pressed === "4") {
+        handleChoice("deny_always");
+      }
+    };
+
+    process.stdin.on("keypress", onKeypress);
   });
 }
