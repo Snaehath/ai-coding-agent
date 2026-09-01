@@ -12,7 +12,7 @@ import {
   promptUserPermission,
   type PermissionAction,
 } from "./permissions.ts";
-import { resolveModel } from "./models.ts";
+import { resolveModel, modelSupportsVision } from "./models.ts";
 import { lspService } from "./lsp-service.ts";
 import { executeHooks, loadHooksConfig } from "./hooks.ts";
 import {
@@ -38,6 +38,8 @@ const colors = {
   boldCyan: (s: string) => `\x1b[1;36m${s}\x1b[0m`,
   boldMagenta: (s: string) => `\x1b[1;35m${s}\x1b[0m`,
   boldYellow: (s: string) => `\x1b[1;33m${s}\x1b[0m`,
+  boldGreen: (s: string) => `\x1b[1;32m${s}\x1b[0m`,
+  cyan: (s: string) => `\x1b[36m${s}\x1b[0m`,
   gray: (s: string) => `\x1b[90m${s}\x1b[0m`,
   red: (s: string) => `\x1b[31m${s}\x1b[0m`,
   green: (s: string) => `\x1b[32m${s}\x1b[0m`,
@@ -500,6 +502,32 @@ async function loadMcpClients(): Promise<Map<string, McpClient>> {
   return clients;
 }
 
+// Convert local image file to base64 Data URL
+export function encodeLocalImageToDataUrl(filePath: string): string | null {
+  try {
+    const cleanPath = filePath.replace(/^['"]|['"]$/g, "").trim();
+    const resolved = path.resolve(process.cwd(), cleanPath);
+    if (!fs.existsSync(resolved) || fs.statSync(resolved).isDirectory()) return null;
+
+    const ext = path.extname(resolved).toLowerCase();
+    const mimeMap: Record<string, string> = {
+      ".png": "image/png",
+      ".jpg": "image/jpeg",
+      ".jpeg": "image/jpeg",
+      ".webp": "image/webp",
+      ".gif": "image/gif",
+      ".svg": "image/svg+xml",
+      ".bmp": "image/bmp",
+    };
+
+    const mime = mimeMap[ext] ?? "image/png";
+    const data = fs.readFileSync(resolved);
+    return `data:${mime};base64,${data.toString("base64")}`;
+  } catch {
+    return null;
+  }
+}
+
 // Core agent loop
 export async function runAgentMode(
   prompt: string,
@@ -508,6 +536,7 @@ export async function runAgentMode(
   mode: ExecutionMode = "cli",
   notifyTool?: (toolName: string, summary: string) => void,
   onToken?: (token: string) => void,
+  imagePaths?: string[],
 ): Promise<string> {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) throw new Error("OPENROUTER_API_KEY is not set");
@@ -582,10 +611,43 @@ Use tools to answer requests (Read, Write, Bash, WebSearch, LSP_Definition, LSP_
     });
   }
 
-  // User message
-  messages.push({ role: "user", content: prompt });
+  // Build multimodal user message if images are attached
+  const contentBlocks: any[] = [{ type: "text", text: prompt }];
+
+  if (imagePaths && imagePaths.length > 0) {
+    for (const imgPath of imagePaths) {
+      const dataUrl = encodeLocalImageToDataUrl(imgPath);
+      if (dataUrl) {
+        contentBlocks.push({
+          type: "image_url",
+          image_url: { url: dataUrl },
+        });
+      } else {
+        process.stderr.write(`[Vision] Warning: Image file not found: ${imgPath}\n`);
+      }
+    }
+  }
+
+  if (contentBlocks.length > 1) {
+    if (!modelSupportsVision(model)) {
+      process.stdout.write(
+        `  ${colors.dim("↳")} ${colors.boldYellow("⚠️ Note:")} ${colors.gray(`${modelInfo.name} may not support vision. For best image analysis, switch to: gemma, qwen3.5, or ministral.\n`)}`,
+      );
+    } else {
+      process.stdout.write(
+        `  ${colors.dim("↳")} ${colors.boldGreen("📷 [Vision Input]")} ${colors.cyan(`${contentBlocks.length - 1} image(s) loaded into context`)}\n`,
+      );
+    }
+  }
+
+  const userMessage =
+    contentBlocks.length > 1
+      ? { role: "user", content: contentBlocks }
+      : { role: "user", content: prompt };
+
+  messages.push(userMessage);
   if (sessionFilePath)
-    appendSessionMessage(sessionFilePath, { role: "user", content: prompt });
+    appendSessionMessage(sessionFilePath, userMessage);
 
   const actionLog: string[] = [];
   const MAX_TURNS = 8;

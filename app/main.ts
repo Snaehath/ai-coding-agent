@@ -26,6 +26,7 @@ import { runServerMode } from "./server.ts";
 async function runCliMode(
   prompt: string,
   options: { isContinue?: boolean; resumeId?: string },
+  imagePaths?: string[],
 ) {
   let sessionFile: string;
   let history: any[] = [];
@@ -80,6 +81,7 @@ async function runCliMode(
     "cli",
     undefined,
     onToken,
+    imagePaths,
   );
 
   if (!streamedAny) {
@@ -95,6 +97,16 @@ async function main() {
   const isContinue = args.includes("--continue") || args.includes("-c");
   const resumeIdx = args.findIndex((a) => a === "--resume" || a === "-r");
   const resumeId = resumeIdx !== -1 ? args[resumeIdx + 1] : undefined;
+
+  // Collect attached images (--image <path> or -i <path>)
+  const imagePaths: string[] = [];
+  for (let idx = 0; idx < args.length; idx++) {
+    if (args[idx] === "--image" || (args[idx] === "-i" && args[idx + 1] && !args[idx + 1].startsWith("-"))) {
+      if (args[idx + 1]) {
+        imagePaths.push(args[idx + 1]);
+      }
+    }
+  }
 
   // Resolve active model following precedence: CLI flag > .agents/models.json > .env > default
   const modelFlagIdx = args.findIndex((a) => a === "--model" || a === "-m");
@@ -200,7 +212,7 @@ async function main() {
   // -p "prompt"
   const pIdx = args.indexOf("-p");
   if (pIdx !== -1 && args[pIdx + 1]) {
-    await runCliMode(args[pIdx + 1], { isContinue, resumeId });
+    await runCliMode(args[pIdx + 1], { isContinue, resumeId }, imagePaths);
     return;
   }
 

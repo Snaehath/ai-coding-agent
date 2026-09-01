@@ -123,6 +123,18 @@ export function resolveModel(input: string): ModelInfo {
   };
 }
 
+// Check if model has Vision / Image Understanding capability
+export function modelSupportsVision(modelId: string): boolean {
+  const info = resolveModel(modelId);
+  return (
+    Array.isArray(info.capabilities) &&
+    info.capabilities.some(
+      (c) =>
+        c.toLowerCase().includes("vision") || c.toLowerCase().includes("image"),
+    )
+  );
+}
+
 // Interactive Model Picker with Arrow Key Navigation & Enter selection
 export async function promptSelectModel(currentModelId: string): Promise<ModelInfo> {
   const models = loadRegisteredModels();

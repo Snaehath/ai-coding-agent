@@ -196,6 +196,7 @@ export async function runReplMode(options: {
               `\n  ${colors.boldYellow("/compact")}          Compress conversation history to save tokens` +
               `\n  ${colors.boldYellow("/model [name]")}     Switch AI model (opens interactive selector)` +
               `\n  ${colors.boldYellow("/thinking [level]")} Set reasoning effort (low, high, off)` +
+              `\n  ${colors.boldYellow("/image <path>")}     Attach an image for vision models` +
               `\n  ${colors.boldYellow("/history")}          View recent conversation history` +
               `\n  ${colors.boldYellow("/paste")}            Start multi-line paste mode` +
               `\n  ${colors.boldYellow("/skills")}           List available skills` +
@@ -296,6 +297,52 @@ export async function runReplMode(options: {
                 `  ${colors.boldYellow("/thinking high")}    Deep, exhaustive multi-step reasoning\n` +
                 `  ${colors.boldYellow("/thinking off")}     Disable thinking block for direct answers\n`,
             );
+          }
+          break;
+        }
+
+        case "/image":
+        case "/img": {
+          const imgPath = rest[0];
+          const userPrompt =
+            rest.slice(1).join(" ").trim() ||
+            "Describe and analyze this image in detail.";
+          if (!imgPath) {
+            console.log(
+              colors.red("Usage: /image <path/to/image.png> [optional question]\n"),
+            );
+            break;
+          }
+
+          try {
+            isRunning = true;
+            let streamedAny = false;
+            const onToken = (token: string) => {
+              if (!streamedAny) {
+                process.stdout.write(colors.boldCyan("agent ❯ "));
+                streamedAny = true;
+              }
+              process.stdout.write(token);
+            };
+
+            const result = await runAgentMode(
+              userPrompt,
+              history,
+              currentSessionFile,
+              "repl",
+              undefined,
+              onToken,
+              [imgPath],
+            );
+
+            if (!streamedAny) {
+              process.stdout.write(colors.boldCyan("agent ❯ ") + result);
+            }
+            process.stdout.write("\n\n");
+          } catch (e: any) {
+            process.stdout.write(`\n${colors.red(`Error: ${e.message}`)}\n\n`);
+          } finally {
+            isRunning = false;
           }
           break;
         }
