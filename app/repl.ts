@@ -195,6 +195,7 @@ export async function runReplMode(options: {
               `\n  ${colors.boldYellow("/help")}             Show this menu` +
               `\n  ${colors.boldYellow("/compact")}          Compress conversation history to save tokens` +
               `\n  ${colors.boldYellow("/model [name]")}     Switch AI model (opens interactive selector)` +
+              `\n  ${colors.boldYellow("/thinking [level]")} Set reasoning effort (low, high, off)` +
               `\n  ${colors.boldYellow("/history")}          View recent conversation history` +
               `\n  ${colors.boldYellow("/paste")}            Start multi-line paste mode` +
               `\n  ${colors.boldYellow("/skills")}           List available skills` +
@@ -273,6 +274,28 @@ export async function runReplMode(options: {
             const chosen = await promptSelectModel(currentModel());
             process.env.MODEL = chosen.id;
             rl.resume();
+          }
+          break;
+        }
+
+        case "/thinking": {
+          const arg = rest[0]?.toLowerCase().trim();
+          if (arg && ["low", "medium", "high", "off", "none"].includes(arg)) {
+            process.env.THINKING_EFFORT = arg === "none" ? "off" : arg;
+            console.log(
+              colors.green(
+                `✨ Thinking effort set to: ${colors.boldCyan(process.env.THINKING_EFFORT.toUpperCase())}\n`,
+              ),
+            );
+          } else {
+            const current = process.env.THINKING_EFFORT ?? "high (default)";
+            console.log(
+              `\n${colors.bold("Thinking / Reasoning Mode:")}\n` +
+                `  Current: ${colors.boldCyan(current.toUpperCase())}\n\n` +
+                `  ${colors.boldYellow("/thinking low")}     Faster, lightweight reasoning pass\n` +
+                `  ${colors.boldYellow("/thinking high")}    Deep, exhaustive multi-step reasoning\n` +
+                `  ${colors.boldYellow("/thinking off")}     Disable thinking block for direct answers\n`,
+            );
           }
           break;
         }

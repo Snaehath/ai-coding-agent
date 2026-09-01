@@ -102,6 +102,14 @@ async function main() {
   const activeModelId = determineActiveModel(cliModelArg);
   process.env.MODEL = activeModelId;
 
+  // --thinking / -t flag (low, medium, high, off)
+  const thinkingFlagIdx = args.findIndex(
+    (a) => a === "--thinking" || a === "-t",
+  );
+  if (thinkingFlagIdx !== -1 && args[thinkingFlagIdx + 1]) {
+    process.env.THINKING_EFFORT = args[thinkingFlagIdx + 1].toLowerCase();
+  }
+
   // --models / --list-models
   if (args.includes("--models") || args.includes("--list-models")) {
     const currentId = process.env.MODEL ?? activeModelId;

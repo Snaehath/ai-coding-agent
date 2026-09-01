@@ -607,12 +607,26 @@ Use tools to answer requests (Read, Write, Bash, WebSearch, LSP_Definition, LSP_
       let turnToolTimeMs = 0;
       let turnErrors = 0;
 
-      const stream = await llm.chat.completions.create({
+      const thinkingEffort = process.env.THINKING_EFFORT?.toLowerCase().trim();
+      const requestPayload: any = {
         model,
         messages: trimContextMessages(messages),
         tools: allTools,
         stream: true,
-      });
+      };
+
+      if (thinkingEffort) {
+        if (thinkingEffort === "off" || thinkingEffort === "none") {
+          requestPayload.enable_thinking = false;
+          requestPayload.think = false;
+        } else if (["low", "medium", "high"].includes(thinkingEffort)) {
+          requestPayload.enable_thinking = true;
+          requestPayload.reasoning_effort = thinkingEffort;
+          requestPayload.think = thinkingEffort;
+        }
+      }
+
+      const stream = await llm.chat.completions.create(requestPayload);
 
       let fullContent = "";
       let inReasoningField = false;
