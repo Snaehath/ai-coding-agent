@@ -615,7 +615,81 @@ Use tools to answer requests (Read, Write, Bash, WebSearch, LSP_Definition, LSP_
       });
 
       let fullContent = "";
-      let isThinking = false;
+      let inReasoningField = false;
+      let inThinkTag = false;
+      let thinkingBuffer = "";
+      let thinkingStartTime = 0;
+      let lastCommentaryUpdate = 0;
+      let spinnerIdx = 0;
+      const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+      const getThinkingStage = (elapsedMs: number, buffer: string): string => {
+        const lower = buffer.toLowerCase().slice(-300);
+
+        if (
+          lower.includes("finally") ||
+          lower.includes("in summary") ||
+          lower.includes("conclusion") ||
+          lower.includes("so the answer") ||
+          lower.includes("now produce") ||
+          lower.includes("final result") ||
+          lower.includes("respond with")
+        ) {
+          return "Finalizing response";
+        }
+
+        if (
+          lower.includes("check") ||
+          lower.includes("verify") ||
+          lower.includes("validate") ||
+          lower.includes("ensure") ||
+          lower.includes("confirm")
+        ) {
+          return "Validating solution";
+        }
+
+        if (
+          lower.includes("step") ||
+          lower.includes("order") ||
+          lower.includes("structure") ||
+          lower.includes("format") ||
+          lower.includes("sequence")
+        ) {
+          return "Synthesizing steps";
+        }
+
+        if (elapsedMs > 18000) return "Finalizing logic";
+        if (elapsedMs > 8000) return "Synthesizing solution";
+        if (elapsedMs > 2500) return "Analyzing approach";
+        return "Thinking";
+      };
+
+      const updateThinkingCommentary = (snippet: string) => {
+        thinkingBuffer += snippet;
+        const now = performance.now();
+        if (now - lastCommentaryUpdate < 80) return;
+        lastCommentaryUpdate = now;
+
+        const elapsedMs = now - thinkingStartTime;
+        const elapsedSec = (elapsedMs / 1000).toFixed(1);
+        const stage = getThinkingStage(elapsedMs, thinkingBuffer);
+        const frame = SPINNER_FRAMES[spinnerIdx % SPINNER_FRAMES.length];
+        spinnerIdx++;
+
+        process.stdout.write(
+          `\r\x1b[2K  ${colors.boldCyan(frame)} ${colors.boldYellow(stage)} ${colors.gray(`(${elapsedSec}s)...`)}`,
+        );
+      };
+
+      const finishThinking = () => {
+        if (!thinkingStartTime) return;
+        const totalSec = ((performance.now() - thinkingStartTime) / 1000).toFixed(1);
+        thinkingStartTime = 0;
+        process.stdout.write(
+          `\r\x1b[2K  ${colors.dim("✨")} ${colors.gray(`Thought for ${totalSec}s`)}\n\n`,
+        );
+      };
+
       const toolCallsMap = new Map<
         number,
         { id?: string; name: string; args: string }
@@ -632,45 +706,51 @@ Use tools to answer requests (Read, Write, Bash, WebSearch, LSP_Definition, LSP_
           if (!firstTokenTime) firstTokenTime = performance.now();
         }
 
-        // Handle dedicated reasoning_content chunk (e.g. DeepSeek-R1, Qwen reasoning, Granite)
+        // 1. Handle dedicated reasoning_content chunk
         if (reasoningChunk) {
-          if (onToken) {
-            if (!isThinking) {
-              isThinking = true;
-              onToken(`\n${colors.boldYellow("💭 Thinking:")}\n\x1b[2m\x1b[3m`);
-            }
-            onToken(reasoningChunk);
+          if (!inReasoningField) {
+            inReasoningField = true;
+            thinkingStartTime = performance.now();
+            thinkingBuffer = "";
           }
+          updateThinkingCommentary(reasoningChunk);
         }
 
-        // Handle content chunk (including embedded <think>...</think> tags)
+        // 2. Handle content chunk
         if (delta.content) {
-          if (isThinking && !delta.content.includes("<think>")) {
-            isThinking = false;
-            if (onToken) {
-              onToken(`\x1b[0m\n\n${colors.boldCyan("🎯 Answer:")}\n`);
+          if (inReasoningField) {
+            inReasoningField = false;
+            finishThinking();
+          }
+
+          let text = delta.content;
+
+          // Check if <think> tag opened in content
+          if (text.includes("<think>")) {
+            inThinkTag = true;
+            thinkingStartTime = performance.now();
+            thinkingBuffer = "";
+            const parts = text.split("<think>");
+            if (parts[0] && onToken) onToken(parts[0]);
+            text = parts[1] ?? "";
+          }
+
+          // If currently inside <think> block
+          if (inThinkTag) {
+            if (text.includes("</think>")) {
+              const parts = text.split("</think>");
+              updateThinkingCommentary(parts[0] ?? "");
+              inThinkTag = false;
+              finishThinking();
+              text = parts[1] ?? "";
+            } else {
+              updateThinkingCommentary(text);
+              continue;
             }
-          }
-
-          let chunkText = delta.content;
-
-          if (chunkText.includes("<think>")) {
-            isThinking = true;
-            chunkText = chunkText.replace(
-              "<think>",
-              `\n${colors.boldYellow("💭 Thinking:")}\n\x1b[2m\x1b[3m`,
-            );
-          }
-          if (chunkText.includes("</think>")) {
-            isThinking = false;
-            chunkText = chunkText.replace(
-              "</think>",
-              `\x1b[0m\n\n${colors.boldCyan("🎯 Answer:")}\n`,
-            );
           }
 
           fullContent += delta.content;
-          if (onToken) {
+          if (onToken && text) {
             const trimmed = fullContent.trimStart();
             const isJsonToolCall =
               trimmed.startsWith("{") ||
@@ -684,12 +764,13 @@ Use tools to answer requests (Read, Write, Bash, WebSearch, LSP_Definition, LSP_
               trimmed.startsWith('"LSP_') ||
               trimmed.startsWith('["');
             if (!isJsonToolCall) {
-              onToken(chunkText);
+              onToken(text);
             }
           }
         }
 
         if (delta.tool_calls) {
+          finishThinking();
           for (const tc of delta.tool_calls) {
             const idx = tc.index ?? 0;
             const existing = toolCallsMap.get(idx) ?? {
@@ -705,9 +786,7 @@ Use tools to answer requests (Read, Write, Bash, WebSearch, LSP_Definition, LSP_
         }
       }
 
-      if (isThinking && onToken) {
-        onToken("\x1b[0m\n");
-      }
+      finishThinking();
 
       // Convert tool calls map to array
       let toolCalls = Array.from(toolCallsMap.values()).map((tc) => ({
