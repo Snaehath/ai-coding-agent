@@ -615,20 +615,60 @@ Use tools to answer requests (Read, Write, Bash, WebSearch, LSP_Definition, LSP_
       });
 
       let fullContent = "";
+      let isThinking = false;
       const toolCallsMap = new Map<
         number,
         { id?: string; name: string; args: string }
       >();
 
       for await (const chunk of stream) {
-        const delta = chunk.choices[0]?.delta;
+        const delta = chunk.choices[0]?.delta as any;
         if (!delta) continue;
 
-        if (delta.content || delta.tool_calls) {
+        const reasoningChunk =
+          delta.reasoning_content || delta.reasoning || delta.thinking || "";
+
+        if (delta.content || delta.tool_calls || reasoningChunk) {
           if (!firstTokenTime) firstTokenTime = performance.now();
         }
 
+        // Handle dedicated reasoning_content chunk (e.g. DeepSeek-R1, Qwen reasoning, Granite)
+        if (reasoningChunk) {
+          if (onToken) {
+            if (!isThinking) {
+              isThinking = true;
+              onToken(`\n${colors.boldYellow("💭 Thinking:")}\n\x1b[2m\x1b[3m`);
+            }
+            onToken(reasoningChunk);
+          }
+        }
+
+        // Handle content chunk (including embedded <think>...</think> tags)
         if (delta.content) {
+          if (isThinking && !delta.content.includes("<think>")) {
+            isThinking = false;
+            if (onToken) {
+              onToken(`\x1b[0m\n\n${colors.boldCyan("🎯 Answer:")}\n`);
+            }
+          }
+
+          let chunkText = delta.content;
+
+          if (chunkText.includes("<think>")) {
+            isThinking = true;
+            chunkText = chunkText.replace(
+              "<think>",
+              `\n${colors.boldYellow("💭 Thinking:")}\n\x1b[2m\x1b[3m`,
+            );
+          }
+          if (chunkText.includes("</think>")) {
+            isThinking = false;
+            chunkText = chunkText.replace(
+              "</think>",
+              `\x1b[0m\n\n${colors.boldCyan("🎯 Answer:")}\n`,
+            );
+          }
+
           fullContent += delta.content;
           if (onToken) {
             const trimmed = fullContent.trimStart();
@@ -644,7 +684,7 @@ Use tools to answer requests (Read, Write, Bash, WebSearch, LSP_Definition, LSP_
               trimmed.startsWith('"LSP_') ||
               trimmed.startsWith('["');
             if (!isJsonToolCall) {
-              onToken(delta.content);
+              onToken(chunkText);
             }
           }
         }
@@ -663,6 +703,10 @@ Use tools to answer requests (Read, Write, Bash, WebSearch, LSP_Definition, LSP_
             toolCallsMap.set(idx, existing);
           }
         }
+      }
+
+      if (isThinking && onToken) {
+        onToken("\x1b[0m\n");
       }
 
       // Convert tool calls map to array

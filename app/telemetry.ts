@@ -199,6 +199,7 @@ export function aggregateSessionTelemetry(
   let totalOutput = 0;
   let totalToolCalls = 0;
   let totalToolTimeMs = 0;
+  let totalGenTimeMs = 0;
   let totalErrors = 0;
   let sumTtft = 0;
   let sumTps = 0;
@@ -212,6 +213,7 @@ export function aggregateSessionTelemetry(
     totalOutput += ev.output_tokens;
     totalToolCalls += ev.tool_calls;
     totalToolTimeMs += ev.tool_time_ms;
+    totalGenTimeMs += ev.generation_time_ms ?? 0;
     totalErrors += ev.errors;
     sumTtft += ev.ttft_ms;
     sumTps += ev.tokens_per_second;
@@ -220,6 +222,14 @@ export function aggregateSessionTelemetry(
     latestConfiguredLimit = ev.configured_context_limit;
     if (ev.model) modelName = ev.model;
   }
+
+  const computedActiveMs = totalGenTimeMs + totalToolTimeMs;
+  const finalDurationMs =
+    sessionStartTime && Date.now() - sessionStartTime > 500
+      ? Date.now() - sessionStartTime
+      : computedActiveMs > 0
+        ? computedActiveMs
+        : durationMs;
 
   const turns = events.length;
   const contextPercent = Math.min(
@@ -231,7 +241,7 @@ export function aggregateSessionTelemetry(
   return {
     sessionId,
     modelName,
-    durationMs,
+    durationMs: finalDurationMs,
     turns,
     totalTokens: totalInput + totalOutput,
     inputTokens: totalInput,
@@ -250,7 +260,7 @@ export function aggregateSessionTelemetry(
 }
 
 // Format duration helper (e.g. "12m 34s" or "4.2s")
-function formatDuration(ms: number): string {
+export function formatDuration(ms: number): string {
   const sec = Math.floor(ms / 1000);
   if (sec < 60) return `${(ms / 1000).toFixed(1)}s`;
   const m = Math.floor(sec / 60);

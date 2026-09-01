@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { exec } from "node:child_process";
-import { aggregateSessionTelemetry } from "./telemetry.ts";
+import { aggregateSessionTelemetry, formatDuration } from "./telemetry.ts";
 
 // Constants
 export const HOOKS_CONFIG_PATH = path.resolve(process.cwd(), ".agents", "hooks.json");
@@ -40,6 +40,9 @@ const colors = {
   gray: (s: string) => `\x1b[90m${s}\x1b[0m`,
   green: (s: string) => `\x1b[32m${s}\x1b[0m`,
   bold: (s: string) => `\x1b[1m${s}\x1b[0m`,
+  boldYellow: (s: string) => `\x1b[1;33m${s}\x1b[0m`,
+  boldCyan: (s: string) => `\x1b[1;36m${s}\x1b[0m`,
+  boldGreen: (s: string) => `\x1b[1;32m${s}\x1b[0m`,
 };
 
 // Load hooks from config file
@@ -79,6 +82,7 @@ function showSessionStatsHook(actionLog?: string[], sessionId?: string): void {
   if (sessionId) {
     const stats = aggregateSessionTelemetry(sessionId);
     const model = stats.modelName || process.env.MODEL || "local-model";
+    const durationStr = stats.durationMs > 0 ? formatDuration(stats.durationMs) : "";
     const speed = stats.avgTokensPerSecond > 0 ? `${stats.avgTokensPerSecond.toFixed(1)} tok/s` : "";
     const tokens = stats.totalTokens > 0 ? `${stats.totalTokens.toLocaleString()} tokens` : "";
     const ctxPercent = stats.configuredContextLimit > 0
@@ -88,6 +92,7 @@ function showSessionStatsHook(actionLog?: string[], sessionId?: string): void {
 
     const parts = [
       colors.cyan(`⚡ ${model}`),
+      durationStr ? colors.boldYellow(durationStr) : null,
       speed ? colors.yellow(speed) : null,
       tokens ? colors.green(tokens) : null,
       ctxPercent ? colors.dim(`(${ctxPercent})`) : null,

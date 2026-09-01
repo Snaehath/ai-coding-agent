@@ -67,8 +67,26 @@ async function runCliMode(
     }
   }
 
-  const result = await runAgentMode(actualPrompt, history, sessionFile, "cli");
-  process.stdout.write(result + "\n");
+  let streamedAny = false;
+  const onToken = (token: string) => {
+    streamedAny = true;
+    process.stdout.write(token);
+  };
+
+  const result = await runAgentMode(
+    actualPrompt,
+    history,
+    sessionFile,
+    "cli",
+    undefined,
+    onToken,
+  );
+
+  if (!streamedAny) {
+    process.stdout.write(result + "\n");
+  } else {
+    process.stdout.write("\n");
+  }
 }
 
 // Main CLI entry point & argument router
