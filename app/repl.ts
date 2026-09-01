@@ -22,6 +22,10 @@ import {
   resolveModel,
   promptSelectModel,
 } from "./models.ts";
+import {
+  StreamingMarkdownFormatter,
+  renderTerminalMarkdown,
+} from "./markdown.ts";
 
 // ANSI terminal colors
 export const colors = {
@@ -316,13 +320,15 @@ export async function runReplMode(options: {
 
           try {
             isRunning = true;
+            const mdFormatter = new StreamingMarkdownFormatter();
             let streamedAny = false;
             const onToken = (token: string) => {
               if (!streamedAny) {
                 process.stdout.write(colors.boldCyan("agent ❯ "));
                 streamedAny = true;
               }
-              process.stdout.write(token);
+              const formatted = mdFormatter.feed(token);
+              if (formatted) process.stdout.write(formatted);
             };
 
             const result = await runAgentMode(
@@ -336,7 +342,12 @@ export async function runReplMode(options: {
             );
 
             if (!streamedAny) {
-              process.stdout.write(colors.boldCyan("agent ❯ ") + result);
+              process.stdout.write(
+                colors.boldCyan("agent ❯ ") + renderTerminalMarkdown(result),
+              );
+            } else {
+              const trailing = mdFormatter.flush();
+              if (trailing) process.stdout.write(trailing);
             }
             process.stdout.write("\n\n");
           } catch (e: any) {
@@ -516,13 +527,15 @@ export async function runReplMode(options: {
 
             try {
               isRunning = true;
+              const mdFormatter = new StreamingMarkdownFormatter();
               let streamedAny = false;
               const onToken = (token: string) => {
                 if (!streamedAny) {
                   process.stdout.write(colors.boldCyan("agent ❯ "));
                   streamedAny = true;
                 }
-                process.stdout.write(token);
+                const formatted = mdFormatter.feed(token);
+                if (formatted) process.stdout.write(formatted);
               };
 
               const result = await runAgentMode(
@@ -534,7 +547,12 @@ export async function runReplMode(options: {
                 onToken,
               );
               if (!streamedAny) {
-                process.stdout.write(colors.boldCyan("agent ❯ ") + result);
+                process.stdout.write(
+                  colors.boldCyan("agent ❯ ") + renderTerminalMarkdown(result),
+                );
+              } else {
+                const trailing = mdFormatter.flush();
+                if (trailing) process.stdout.write(trailing);
               }
               process.stdout.write("\n\n");
             } catch (e: any) {
@@ -554,16 +572,18 @@ export async function runReplMode(options: {
       continue;
     }
 
-    // Run prompt in agent with live streaming
+    // Run prompt in agent with live streaming & markdown formatting
     try {
       isRunning = true;
+      const mdFormatter = new StreamingMarkdownFormatter();
       let streamedAny = false;
       const onToken = (token: string) => {
         if (!streamedAny) {
           process.stdout.write(colors.boldCyan("agent ❯ "));
           streamedAny = true;
         }
-        process.stdout.write(token);
+        const formatted = mdFormatter.feed(token);
+        if (formatted) process.stdout.write(formatted);
       };
 
       const result = await runAgentMode(
@@ -576,7 +596,12 @@ export async function runReplMode(options: {
       );
 
       if (!streamedAny) {
-        process.stdout.write(colors.boldCyan("agent ❯ ") + result);
+        process.stdout.write(
+          colors.boldCyan("agent ❯ ") + renderTerminalMarkdown(result),
+        );
+      } else {
+        const trailing = mdFormatter.flush();
+        if (trailing) process.stdout.write(trailing);
       }
       process.stdout.write("\n\n");
     } catch (e: any) {

@@ -55,11 +55,23 @@ const FALLBACK_MODELS: ModelInfo[] = [
   },
 ];
 
-// Load models dynamically from .agents/models.json with full normalization
+// Load models dynamically from .agents/models.json with global install directory fallback
 export function loadRegisteredModels(): ModelInfo[] {
-  if (fs.existsSync(MODELS_CONFIG_PATH)) {
+  const globalPath = path.resolve(
+    import.meta.dir,
+    "..",
+    ".agents",
+    "models.json",
+  );
+  const targetPath = fs.existsSync(MODELS_CONFIG_PATH)
+    ? MODELS_CONFIG_PATH
+    : fs.existsSync(globalPath)
+      ? globalPath
+      : null;
+
+  if (targetPath) {
     try {
-      const raw = fs.readFileSync(MODELS_CONFIG_PATH, "utf-8");
+      const raw = fs.readFileSync(targetPath, "utf-8");
       const parsed: ModelsConfigFile = JSON.parse(raw);
       if (Array.isArray(parsed.models) && parsed.models.length > 0) {
         return parsed.models.map((m: any) => ({

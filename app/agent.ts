@@ -538,14 +538,15 @@ export async function runAgentMode(
   onToken?: (token: string) => void,
   imagePaths?: string[],
 ): Promise<string> {
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) throw new Error("OPENROUTER_API_KEY is not set");
+  const baseURL =
+    process.env.OPENROUTER_BASE_URL ?? "http://localhost:11434/v1";
+  const apiKey = process.env.OPENROUTER_API_KEY || "ollama";
 
   const llm = new OpenAI({
     apiKey,
-    baseURL: process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1",
+    baseURL,
   });
-  const model = process.env.MODEL ?? "qwen2.5-coder:7b-instruct-q3_k_m";
+  const model = process.env.MODEL ?? "granite4.2:3b";
   const modelInfo = resolveModel(model);
   const agentName =
     modelInfo.name || process.env.AGENT_NAME || "an expert coding assistant";
@@ -863,6 +864,9 @@ Use tools to answer requests (Read, Write, Bash, WebSearch, LSP_Definition, LSP_
       }
 
       finishThinking();
+      if (toolCallsMap.size === 0 && onToken) {
+        process.stdout.write("\n");
+      }
 
       // Convert tool calls map to array
       let toolCalls = Array.from(toolCallsMap.values()).map((tc) => ({

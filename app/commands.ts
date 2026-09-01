@@ -46,25 +46,39 @@ export function parseCommandMarkdown(content: string, filePath: string): CustomC
   };
 }
 
-// Load all custom commands from .agents/commands/
+// Load all custom commands from workspace .agents/commands/ and global install dir
 export function loadAllCommands(dir: string = COMMANDS_DIR): Map<string, CustomCommand> {
-  const commands = new Map<string, CustomCommand>();
-  if (!fs.existsSync(dir)) return commands;
+  const globalDir = path.resolve(
+    import.meta.dir,
+    "..",
+    ".agents",
+    "commands",
+  );
 
-  const entries = fs.readdirSync(dir, { withFileTypes: true });
-  for (const entry of entries) {
-    if (entry.isFile() && entry.name.endsWith(".md")) {
-      const fullPath = path.join(dir, entry.name);
-      try {
-        const content = fs.readFileSync(fullPath, "utf-8");
-        const cmd = parseCommandMarkdown(content, fullPath);
-        if (cmd) {
-          commands.set(cmd.name, cmd);
+  const commands = new Map<string, CustomCommand>();
+
+  function scanDir(targetDir: string) {
+    if (!fs.existsSync(targetDir)) return;
+    const entries = fs.readdirSync(targetDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isFile() && entry.name.endsWith(".md")) {
+        const fullPath = path.join(targetDir, entry.name);
+        try {
+          const content = fs.readFileSync(fullPath, "utf-8");
+          const cmd = parseCommandMarkdown(content, fullPath);
+          if (cmd && !commands.has(cmd.name)) {
+            commands.set(cmd.name, cmd);
+          }
+        } catch (e: any) {
+          process.stderr.write(`[Commands] Failed to load ${fullPath}: ${e.message}\n`);
         }
-      } catch (e: any) {
-        process.stderr.write(`[Commands] Failed to load ${fullPath}: ${e.message}\n`);
       }
     }
+  }
+
+  scanDir(dir);
+  if (path.resolve(dir) !== path.resolve(globalDir)) {
+    scanDir(globalDir);
   }
 
   return commands;

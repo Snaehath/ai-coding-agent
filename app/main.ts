@@ -1,3 +1,5 @@
+#!/usr/bin/env bun
+import fs from "node:fs";
 import path from "node:path";
 import { runAgentMode } from "./agent.ts";
 import {
@@ -21,6 +23,40 @@ import {
 } from "./models.ts";
 import { runReplMode, colors } from "./repl.ts";
 import { runServerMode } from "./server.ts";
+import {
+  StreamingMarkdownFormatter,
+  renderTerminalMarkdown,
+} from "./markdown.ts";
+
+// Auto-load .env from global agent installation directory and local workspace
+function loadEnvFiles() {
+  const globalEnv = path.resolve(import.meta.dir, "..", ".env");
+  const localEnv = path.resolve(process.cwd(), ".env");
+  for (const envPath of [globalEnv, localEnv]) {
+    if (fs.existsSync(envPath)) {
+      try {
+        const lines = fs.readFileSync(envPath, "utf-8").split("\n");
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith("#")) continue;
+          const eqIdx = trimmed.indexOf("=");
+          if (eqIdx !== -1) {
+            const key = trimmed.slice(0, eqIdx).trim();
+            const val = trimmed
+              .slice(eqIdx + 1)
+              .trim()
+              .replace(/^['"]|['"]$/g, "");
+            if (key && !process.env[key]) {
+              process.env[key] = val;
+            }
+          }
+        }
+      } catch {}
+    }
+  }
+}
+
+loadEnvFiles();
 
 // CLI single-prompt mode (-p "...")
 async function runCliMode(
@@ -68,10 +104,12 @@ async function runCliMode(
     }
   }
 
+  const mdFormatter = new StreamingMarkdownFormatter();
   let streamedAny = false;
   const onToken = (token: string) => {
     streamedAny = true;
-    process.stdout.write(token);
+    const formatted = mdFormatter.feed(token);
+    if (formatted) process.stdout.write(formatted);
   };
 
   const result = await runAgentMode(
@@ -85,8 +123,10 @@ async function runCliMode(
   );
 
   if (!streamedAny) {
-    process.stdout.write(result + "\n");
+    process.stdout.write(renderTerminalMarkdown(result) + "\n");
   } else {
+    const trailing = mdFormatter.flush();
+    if (trailing) process.stdout.write(trailing);
     process.stdout.write("\n");
   }
 }
