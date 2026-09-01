@@ -22,16 +22,16 @@ import {
 
 // ANSI terminal colors
 export const colors = {
-  bold:       (s: string) => `\x1b[1m${s}\x1b[0m`,
-  dim:        (s: string) => `\x1b[2m${s}\x1b[0m`,
-  italic:     (s: string) => `\x1b[3m${s}\x1b[0m`,
-  cyan:       (s: string) => `\x1b[36m${s}\x1b[0m`,
-  green:      (s: string) => `\x1b[32m${s}\x1b[0m`,
-  yellow:     (s: string) => `\x1b[33m${s}\x1b[0m`,
-  gray:       (s: string) => `\x1b[90m${s}\x1b[0m`,
-  red:        (s: string) => `\x1b[31m${s}\x1b[0m`,
-  boldCyan:   (s: string) => `\x1b[1;36m${s}\x1b[0m`,
-  boldGreen:  (s: string) => `\x1b[1;32m${s}\x1b[0m`,
+  bold: (s: string) => `\x1b[1m${s}\x1b[0m`,
+  dim: (s: string) => `\x1b[2m${s}\x1b[0m`,
+  italic: (s: string) => `\x1b[3m${s}\x1b[0m`,
+  cyan: (s: string) => `\x1b[36m${s}\x1b[0m`,
+  green: (s: string) => `\x1b[32m${s}\x1b[0m`,
+  yellow: (s: string) => `\x1b[33m${s}\x1b[0m`,
+  gray: (s: string) => `\x1b[90m${s}\x1b[0m`,
+  red: (s: string) => `\x1b[31m${s}\x1b[0m`,
+  boldCyan: (s: string) => `\x1b[1;36m${s}\x1b[0m`,
+  boldGreen: (s: string) => `\x1b[1;32m${s}\x1b[0m`,
   boldYellow: (s: string) => `\x1b[1;33m${s}\x1b[0m`,
 };
 
@@ -77,7 +77,10 @@ async function runCliMode(
 
   let actualPrompt = prompt.trim();
   // Normalize Git Bash MSYS2 path translation (e.g. C:/Program Files/Git/explain -> /explain)
-  actualPrompt = actualPrompt.replace(/^[A-Za-z]:[/\\]Program Files[/\\]Git[/\\]/i, "/");
+  actualPrompt = actualPrompt.replace(
+    /^[A-Za-z]:[/\\]Program Files[/\\]Git[/\\]/i,
+    "/",
+  );
 
   if (actualPrompt.startsWith("/")) {
     const [cmd, ...rest] = actualPrompt.split(/\s+/);
@@ -86,7 +89,9 @@ async function runCliMode(
     if (customCommands.has(cmdName)) {
       const customCmd = customCommands.get(cmdName)!;
       actualPrompt = expandCommandTemplate(customCmd.template, rest.join(" "));
-      process.stdout.write(colors.dim(`↳ [Custom Command /${cmdName}] ${customCmd.description}\n`));
+      process.stdout.write(
+        colors.dim(`↳ [Custom Command /${cmdName}] ${customCmd.description}\n`),
+      );
     }
   }
 
@@ -95,7 +100,10 @@ async function runCliMode(
 }
 
 // Interactive terminal REPL mode
-async function runReplMode(options: { isContinue?: boolean; resumeId?: string }) {
+async function runReplMode(options: {
+  isContinue?: boolean;
+  resumeId?: string;
+}) {
   let currentSessionFile: string;
   let history: any[] = [];
   const customCommands = loadAllCommands();
@@ -123,14 +131,42 @@ async function runReplMode(options: { isContinue?: boolean; resumeId?: string })
 
   // Welcome banner
   console.log(
-    "\n" + colors.boldCyan("╔═══════════════════════════════════════════════════════════╗") +
-    "\n" + colors.boldCyan("║") + "           🤖 " + colors.bold("AI Coding Agent  (Interactive TUI)") + "            " + colors.boldCyan("║") +
-    "\n" + colors.boldCyan("╚═══════════════════════════════════════════════════════════╝"),
+    "\n" +
+      colors.boldCyan(
+        "╔═══════════════════════════════════════════════════════════╗",
+      ) +
+      "\n" +
+      colors.boldCyan("║") +
+      "           🤖 " +
+      colors.bold("Local Coding Agent") +
+      "            " +
+      colors.boldCyan("║") +
+      "\n" +
+      colors.boldCyan(
+        "╚═══════════════════════════════════════════════════════════╝",
+      ),
   );
-  console.log(colors.dim("  Type ") + colors.boldYellow("/help") + colors.dim(" for commands · ") + colors.boldYellow('"""') + colors.dim(" for multi-line · ") + colors.boldYellow("/exit") + colors.dim(" to quit"));
-  console.log(colors.dim("  Model: ") + colors.cyan(currentModel()) + colors.dim(" · Session: ") + colors.green(sessionId()) + colors.dim(` (${history.length} msgs)\n`));
+  console.log(
+    colors.dim("  Type ") +
+      colors.boldYellow("/help") +
+      colors.dim(" for commands · ") +
+      colors.boldYellow('"""') +
+      colors.dim(" for multi-line · ") +
+      colors.boldYellow("/exit") +
+      colors.dim(" to quit"),
+  );
+  console.log(
+    colors.dim("  Model: ") +
+      colors.cyan(currentModel()) +
+      colors.dim(" · Session: ") +
+      colors.green(sessionId()) +
+      colors.dim(` (${history.length} msgs)\n`),
+  );
 
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
   let isRunning = false;
   let multiLineBuffer: string[] = [];
   let isMultiLineMode = false;
@@ -164,7 +200,11 @@ async function runReplMode(options: { isContinue?: boolean; resumeId?: string })
     if (!isMultiLineMode && (trimmed === '"""' || trimmed === "'''")) {
       isMultiLineMode = true;
       multiLineBuffer = [];
-      console.log(colors.dim("  (Multi-line mode active. Type '\"\"\"' to finish and submit)"));
+      console.log(
+        colors.dim(
+          '  (Multi-line mode active. Type \'"""\' to finish and submit)',
+        ),
+      );
       ask();
       continue;
     }
@@ -174,7 +214,10 @@ async function runReplMode(options: { isContinue?: boolean; resumeId?: string })
         isMultiLineMode = false;
         const fullPrompt = multiLineBuffer.join("\n").trim();
         multiLineBuffer = [];
-        if (!fullPrompt) { ask(); continue; }
+        if (!fullPrompt) {
+          ask();
+          continue;
+        }
         // Process accumulated multi-line prompt below
       } else {
         multiLineBuffer.push(rawLine);
@@ -183,8 +226,17 @@ async function runReplMode(options: { isContinue?: boolean; resumeId?: string })
       }
     }
 
-    const input = (isMultiLineMode ? "" : multiLineBuffer.length > 0 ? multiLineBuffer.join("\n") : rawLine).trim();
-    if (!input) { ask(); continue; }
+    const input = (
+      isMultiLineMode
+        ? ""
+        : multiLineBuffer.length > 0
+          ? multiLineBuffer.join("\n")
+          : rawLine
+    ).trim();
+    if (!input) {
+      ask();
+      continue;
+    }
 
     // Slash command handling
     if (input.startsWith("/")) {
@@ -199,25 +251,28 @@ async function runReplMode(options: { isContinue?: boolean; resumeId?: string })
 
         case "/help": {
           console.log(
-            "\n" + colors.bold("System Commands:") +
-            `\n  ${colors.boldYellow("/help")}             Show this menu` +
-            `\n  ${colors.boldYellow("/compact")}          Compress conversation history to save tokens` +
-            `\n  ${colors.boldYellow("/model [name]")}     View or switch active LLM model` +
-            `\n  ${colors.boldYellow("/history")}          View recent conversation history` +
-            `\n  ${colors.boldYellow("/paste")}            Start multi-line paste mode` +
-            `\n  ${colors.boldYellow("/skills")}           List available skills` +
-            `\n  ${colors.boldYellow("/permissions")}      List active permission policies` +
-            `\n  ${colors.boldYellow("/clear")} | ${colors.boldYellow("/new")}     Start a fresh session` +
-            `\n  ${colors.boldYellow("/sessions")} | ${colors.boldYellow("/list")} List saved sessions` +
-            `\n  ${colors.boldYellow("/resume <id>")}    Resume an existing session` +
-            `\n  ${colors.boldYellow("/exit")} | ${colors.boldYellow("/quit")}     Exit`,
+            "\n" +
+              colors.bold("System Commands:") +
+              `\n  ${colors.boldYellow("/help")}             Show this menu` +
+              `\n  ${colors.boldYellow("/compact")}          Compress conversation history to save tokens` +
+              `\n  ${colors.boldYellow("/model [name]")}     View or switch active LLM model` +
+              `\n  ${colors.boldYellow("/history")}          View recent conversation history` +
+              `\n  ${colors.boldYellow("/paste")}            Start multi-line paste mode` +
+              `\n  ${colors.boldYellow("/skills")}           List available skills` +
+              `\n  ${colors.boldYellow("/permissions")}      List active permission policies` +
+              `\n  ${colors.boldYellow("/clear")} | ${colors.boldYellow("/new")}     Start a fresh session` +
+              `\n  ${colors.boldYellow("/sessions")} | ${colors.boldYellow("/list")} List saved sessions` +
+              `\n  ${colors.boldYellow("/resume <id>")}    Resume an existing session` +
+              `\n  ${colors.boldYellow("/exit")} | ${colors.boldYellow("/quit")}     Exit`,
           );
 
           const customList = Array.from(customCommands.values());
           if (customList.length > 0) {
             console.log("\n" + colors.bold("Custom Slash Commands:"));
             for (const c of customList) {
-              console.log(`  ${colors.boldCyan("/" + c.name)}  ${colors.gray(c.description)}`);
+              console.log(
+                `  ${colors.boldCyan("/" + c.name)}  ${colors.gray(c.description)}`,
+              );
             }
           }
           console.log();
@@ -226,21 +281,38 @@ async function runReplMode(options: { isContinue?: boolean; resumeId?: string })
 
         case "/compact": {
           if (history.length <= 2) {
-            console.log(colors.gray("Session history is too short to compact.\n"));
+            console.log(
+              colors.gray("Session history is too short to compact.\n"),
+            );
             break;
           }
           console.log(colors.dim("  Compressing session history with LLM..."));
           try {
-            const summaryPrompt = "Summarize the key facts, decisions, and instructions from our conversation so far in 3-4 concise bullet points.";
-            const summary = await runAgentMode(summaryPrompt, history, currentSessionFile, "cli");
+            const summaryPrompt =
+              "Summarize the key facts, decisions, and instructions from our conversation so far in 3-4 concise bullet points.";
+            const summary = await runAgentMode(
+              summaryPrompt,
+              history,
+              currentSessionFile,
+              "cli",
+            );
             history = [
-              { role: "user", content: `[Context Summary of prior conversation]:\n${summary}` },
-              { role: "assistant", content: "Understood. I have loaded the compressed session context and am ready to proceed." },
+              {
+                role: "user",
+                content: `[Context Summary of prior conversation]:\n${summary}`,
+              },
+              {
+                role: "assistant",
+                content:
+                  "Understood. I have loaded the compressed session context and am ready to proceed.",
+              },
             ];
             rewriteSessionFile(currentSessionFile, history);
             console.log(colors.green(`✨ Session compacted to 2 messages.\n`));
           } catch (e: any) {
-            console.log(colors.red(`Failed to compact session: ${e.message}\n`));
+            console.log(
+              colors.red(`Failed to compact session: ${e.message}\n`),
+            );
           }
           break;
         }
@@ -250,23 +322,45 @@ async function runReplMode(options: { isContinue?: boolean; resumeId?: string })
           if (rawArg) {
             const targetModel = resolveModel(rawArg);
             process.env.MODEL = targetModel.id;
-            console.log(colors.green(`✨ Active model switched to: ${colors.boldCyan(targetModel.name)} (${targetModel.id})`));
-            console.log(colors.gray(`   Creator: ${targetModel.creator} · License: ${targetModel.license} · ${targetModel.vramUsage}`));
-            console.log(colors.dim(`   Capabilities: ${targetModel.capabilities.join(", ")}\n`));
+            console.log(
+              colors.green(
+                `✨ Active model switched to: ${colors.boldCyan(targetModel.name)} (${targetModel.id})`,
+              ),
+            );
+            console.log(
+              colors.gray(
+                `   Creator: ${targetModel.creator} · License: ${targetModel.license} · ${targetModel.vramUsage}`,
+              ),
+            );
+            console.log(
+              colors.dim(
+                `   Capabilities: ${targetModel.capabilities.join(", ")}\n`,
+              ),
+            );
           } else {
             const currentId = currentModel();
             console.log("\n" + colors.bold("Available Models:"));
             console.log(colors.gray("─".repeat(68)));
             for (const m of REGISTERED_MODELS) {
-              const isActive = m.id.toLowerCase() === currentId.toLowerCase() || m.aliases.includes(currentId.toLowerCase());
+              const isActive =
+                m.id.toLowerCase() === currentId.toLowerCase() ||
+                Boolean(m.aliases?.some((a) => a.toLowerCase() === currentId.toLowerCase()));
               const badge = isActive ? colors.boldGreen(" [ACTIVE]") : "";
               console.log(`${colors.boldCyan("• " + m.name)}${badge}`);
-              console.log(`  ID: ${colors.dim(m.id)} · Aliases: ${colors.yellow(m.aliases.join(", "))}`);
-              console.log(`  Creator: ${m.creator} · License: ${m.license} · ${m.vramUsage}`);
+              console.log(
+                `  ID: ${colors.dim(m.id)} · Aliases: ${colors.yellow((m.aliases ?? []).join(", "))}`,
+              );
+              console.log(
+                `  Creator: ${m.creator} · License: ${m.license} · ${m.vramUsage}`,
+              );
               console.log(`  Good at: ${colors.gray(m.description)}`);
-              console.log(`  Capabilities: ${colors.italic(m.capabilities.join(" · "))}\n`);
+              console.log(
+                `  Capabilities: ${colors.italic(m.capabilities.join(" · "))}\n`,
+              );
             }
-            console.log(`Usage: ${colors.boldYellow("/model granite")} or ${colors.boldYellow("/model qwen")}\n`);
+            console.log(
+              `Usage: ${colors.boldYellow("/model granite")} or ${colors.boldYellow("/model qwen")}\n`,
+            );
           }
           break;
         }
@@ -275,12 +369,20 @@ async function runReplMode(options: { isContinue?: boolean; resumeId?: string })
           if (history.length === 0) {
             console.log(colors.gray("No messages in current session.\n"));
           } else {
-            console.log("\n" + colors.bold(`Session History (${sessionId()}):`));
+            console.log(
+              "\n" + colors.bold(`Session History (${sessionId()}):`),
+            );
             console.log(colors.gray("─".repeat(68)));
             for (const m of history.slice(-6)) {
               if (m.role === "system") continue;
-              const roleTag = m.role === "user" ? colors.boldGreen("user:") : colors.boldCyan("agent:");
-              const text = typeof m.content === "string" ? m.content.slice(0, 100) : "[tool calls]";
+              const roleTag =
+                m.role === "user"
+                  ? colors.boldGreen("user:")
+                  : colors.boldCyan("agent:");
+              const text =
+                typeof m.content === "string"
+                  ? m.content.slice(0, 100)
+                  : "[tool calls]";
               console.log(`${roleTag} ${text}`);
             }
             console.log();
@@ -291,18 +393,31 @@ async function runReplMode(options: { isContinue?: boolean; resumeId?: string })
         case "/paste":
           isMultiLineMode = true;
           multiLineBuffer = [];
-          console.log(colors.dim("  (Multi-line paste mode active. Type '\"\"\"' or '/end' to submit)"));
+          console.log(
+            colors.dim(
+              "  (Multi-line paste mode active. Type '\"\"\"' or '/end' to submit)",
+            ),
+          );
           break;
 
         case "/permissions": {
           const permConfig = loadPermissionConfig();
           console.log("\n" + colors.bold("Active Permission Policies:"));
           console.log(colors.gray("─".repeat(68)));
-          console.log(`Default Action: ${colors.boldGreen(permConfig.defaultAction.toUpperCase())}\n`);
+          console.log(
+            `Default Action: ${colors.boldGreen(permConfig.defaultAction.toUpperCase())}\n`,
+          );
           for (const r of permConfig.rules) {
-            const actionColor = r.action === "deny" ? colors.red : r.action === "ask" ? colors.yellow : colors.green;
+            const actionColor =
+              r.action === "deny"
+                ? colors.red
+                : r.action === "ask"
+                  ? colors.yellow
+                  : colors.green;
             const pat = r.pattern ? ` [pattern: ${r.pattern}]` : "";
-            console.log(`• [${actionColor(r.action.toUpperCase())}] ${colors.bold(r.tool)}${pat}\n  ${colors.gray(r.description ?? "No description")}`);
+            console.log(
+              `• [${actionColor(r.action.toUpperCase())}] ${colors.bold(r.tool)}${pat}\n  ${colors.gray(r.description ?? "No description")}`,
+            );
           }
           console.log();
           break;
@@ -316,8 +431,12 @@ async function runReplMode(options: { isContinue?: boolean; resumeId?: string })
             console.log("\n" + colors.bold("Available Skills:"));
             console.log(colors.gray("─".repeat(68)));
             for (const s of skills) {
-              const toolInfo = s.tools ? colors.dim(` [tools: ${s.tools.join(", ")}]`) : "";
-              console.log(`• ${colors.boldCyan(s.name)}${toolInfo}\n  ${colors.gray(s.description)}`);
+              const toolInfo = s.tools
+                ? colors.dim(` [tools: ${s.tools.join(", ")}]`)
+                : "";
+              console.log(
+                `• ${colors.boldCyan(s.name)}${toolInfo}\n  ${colors.gray(s.description)}`,
+              );
             }
             console.log();
           }
@@ -352,14 +471,19 @@ async function runReplMode(options: { isContinue?: boolean; resumeId?: string })
 
         case "/resume": {
           const id = rest[0];
-          if (!id) { console.log(colors.red("Usage: /resume <sessionId>\n")); break; }
+          if (!id) {
+            console.log(colors.red("Usage: /resume <sessionId>\n"));
+            break;
+          }
           const target = getSessionFileByID(id);
           if (!target) {
             console.log(colors.red(`❌ Session not found: ${id}\n`));
           } else {
             currentSessionFile = target;
             history = loadSessionMessages(target);
-            console.log(colors.green(`🔄 Resumed ${id} · ${history.length} messages\n`));
+            console.log(
+              colors.green(`🔄 Resumed ${id} · ${history.length} messages\n`),
+            );
           }
           break;
         }
@@ -369,8 +493,15 @@ async function runReplMode(options: { isContinue?: boolean; resumeId?: string })
           if (customCommands.has(cmdName)) {
             const customCmd = customCommands.get(cmdName)!;
             const rawArgs = rest.join(" ");
-            const expandedPrompt = expandCommandTemplate(customCmd.template, rawArgs);
-            console.log(colors.dim(`  ↳ [Custom Command /${cmdName}] ${customCmd.description}`));
+            const expandedPrompt = expandCommandTemplate(
+              customCmd.template,
+              rawArgs,
+            );
+            console.log(
+              colors.dim(
+                `  ↳ [Custom Command /${cmdName}] ${customCmd.description}`,
+              ),
+            );
 
             try {
               isRunning = true;
@@ -383,13 +514,22 @@ async function runReplMode(options: { isContinue?: boolean; resumeId?: string })
                 process.stdout.write(token);
               };
 
-              const result = await runAgentMode(expandedPrompt, history, currentSessionFile, "repl", undefined, onToken);
+              const result = await runAgentMode(
+                expandedPrompt,
+                history,
+                currentSessionFile,
+                "repl",
+                undefined,
+                onToken,
+              );
               if (!streamedAny) {
                 process.stdout.write(colors.boldCyan("agent ❯ ") + result);
               }
               process.stdout.write("\n\n");
             } catch (e: any) {
-              process.stdout.write(`\n${colors.red(`Error: ${e.message}`)}\n\n`);
+              process.stdout.write(
+                `\n${colors.red(`Error: ${e.message}`)}\n\n`,
+              );
             } finally {
               isRunning = false;
             }
@@ -415,7 +555,14 @@ async function runReplMode(options: { isContinue?: boolean; resumeId?: string })
         process.stdout.write(token);
       };
 
-      const result = await runAgentMode(input, history, currentSessionFile, "repl", undefined, onToken);
+      const result = await runAgentMode(
+        input,
+        history,
+        currentSessionFile,
+        "repl",
+        undefined,
+        onToken,
+      );
 
       // If tokens weren't streamed directly (e.g. tool actions only), print the final result
       if (!streamedAny) {
@@ -436,16 +583,25 @@ async function runServerMode() {
   let currentSessionFile = createNewSessionPath();
   let sessionMessages: any[] = [];
 
-  const rl = readline.createInterface({ input: process.stdin, terminal: false });
-  const send = (obj: JsonRpcResponse) => process.stdout.write(JSON.stringify(obj) + "\n");
+  const rl = readline.createInterface({
+    input: process.stdin,
+    terminal: false,
+  });
+  const send = (obj: JsonRpcResponse) =>
+    process.stdout.write(JSON.stringify(obj) + "\n");
 
   for await (const line of rl) {
     if (!line.trim()) continue;
 
     let req: JsonRpcRequest;
-    try { req = JSON.parse(line); }
-    catch {
-      send({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } });
+    try {
+      req = JSON.parse(line);
+    } catch {
+      send({
+        jsonrpc: "2.0",
+        id: null,
+        error: { code: -32700, message: "Parse error" },
+      });
       continue;
     }
 
@@ -454,10 +610,14 @@ async function runServerMode() {
     switch (req.method) {
       case "initialize":
         send({
-          jsonrpc: "2.0", id,
+          jsonrpc: "2.0",
+          id,
           result: {
             protocolVersion: "2026-08-30",
-            agentInfo: { name: process.env.AGENT_NAME ?? "AI Coding Agent", version: "1.0.0" },
+            agentInfo: {
+              name: process.env.AGENT_NAME ?? "AI Coding Agent",
+              version: "1.0.0",
+            },
             capabilities: { tools: ["Read", "Write", "Bash", "WebSearch"] },
           },
         });
@@ -470,7 +630,11 @@ async function runServerMode() {
       case "session/new":
         currentSessionFile = createNewSessionPath();
         sessionMessages = [];
-        send({ jsonrpc: "2.0", id, result: { sessionId: path.basename(currentSessionFile, ".jsonl") } });
+        send({
+          jsonrpc: "2.0",
+          id,
+          result: { sessionId: path.basename(currentSessionFile, ".jsonl") },
+        });
         break;
 
       case "session/list":
@@ -481,11 +645,22 @@ async function runServerMode() {
         const targetId = req.params?.sessionId;
         const target = getSessionFileByID(targetId);
         if (!target) {
-          send({ jsonrpc: "2.0", id, error: { code: -32001, message: `Session not found: ${targetId}` } });
+          send({
+            jsonrpc: "2.0",
+            id,
+            error: { code: -32001, message: `Session not found: ${targetId}` },
+          });
         } else {
           currentSessionFile = target;
           sessionMessages = loadSessionMessages(target);
-          send({ jsonrpc: "2.0", id, result: { sessionId: targetId, messageCount: sessionMessages.length } });
+          send({
+            jsonrpc: "2.0",
+            id,
+            result: {
+              sessionId: targetId,
+              messageCount: sessionMessages.length,
+            },
+          });
         }
         break;
       }
@@ -494,14 +669,28 @@ async function runServerMode() {
         const userPrompt: string = req.params?.prompt ?? "";
         const notifyTool = (toolName: string, summary: string) => {
           process.stdout.write(
-            JSON.stringify({ jsonrpc: "2.0", method: "session/tool_call", params: { tool: toolName, summary } }) + "\n",
+            JSON.stringify({
+              jsonrpc: "2.0",
+              method: "session/tool_call",
+              params: { tool: toolName, summary },
+            }) + "\n",
           );
         };
         try {
-          const result = await runAgentMode(userPrompt, sessionMessages, currentSessionFile, "server", notifyTool);
+          const result = await runAgentMode(
+            userPrompt,
+            sessionMessages,
+            currentSessionFile,
+            "server",
+            notifyTool,
+          );
           send({ jsonrpc: "2.0", id, result: { content: result } });
         } catch (e: any) {
-          send({ jsonrpc: "2.0", id, error: { code: -32000, message: e.message ?? "Internal error" } });
+          send({
+            jsonrpc: "2.0",
+            id,
+            error: { code: -32000, message: e.message ?? "Internal error" },
+          });
         }
         break;
       }
@@ -509,15 +698,27 @@ async function runServerMode() {
       case "session/delete": {
         const targetId = req.params?.sessionId;
         if (deleteSessionById(targetId)) {
-          send({ jsonrpc: "2.0", id, result: { deleted: true, sessionId: targetId } });
+          send({
+            jsonrpc: "2.0",
+            id,
+            result: { deleted: true, sessionId: targetId },
+          });
         } else {
-          send({ jsonrpc: "2.0", id, error: { code: -32001, message: `Session not found: ${targetId}` } });
+          send({
+            jsonrpc: "2.0",
+            id,
+            error: { code: -32001, message: `Session not found: ${targetId}` },
+          });
         }
         break;
       }
 
       default:
-        send({ jsonrpc: "2.0", id, error: { code: -32601, message: "Method not found" } });
+        send({
+          jsonrpc: "2.0",
+          id,
+          error: { code: -32601, message: "Method not found" },
+        });
     }
   }
 }
@@ -540,15 +741,19 @@ async function main() {
     const currentId = process.env.MODEL ?? activeModelId;
     console.log("Available AI Models:\n" + "─".repeat(68));
     for (const m of REGISTERED_MODELS) {
-      const isActive = m.id.toLowerCase() === currentId.toLowerCase() || m.aliases.includes(currentId.toLowerCase());
+      const isActive =
+        m.id.toLowerCase() === currentId.toLowerCase() ||
+        Boolean(m.aliases?.some((a) => a.toLowerCase() === currentId.toLowerCase()));
       const badge = isActive ? " [ACTIVE]" : "";
       console.log(`• ${m.name}${badge}`);
-      console.log(`  ID: ${m.id} | Aliases: ${m.aliases.join(", ")}`);
-      console.log(`  Creator: ${m.creator} | License: ${m.license} | ${m.vramUsage}`);
+      console.log(`  ID: ${m.id} | Aliases: ${(m.aliases ?? []).join(", ")}`);
+      console.log(
+        `  Creator: ${m.creator} | License: ${m.license} | ${m.vramUsage}`,
+      );
       console.log(`  Good at: ${m.description}`);
       console.log(`  Capabilities: ${m.capabilities.join(" · ")}\n`);
     }
-    console.log(`Switch model with: -m granite or -m qwen`);
+    console.log(`Switch model with: -m granite, -m qwen, -m gemma, -m ministral, or -m lfm`);
     return;
   }
 
@@ -559,7 +764,9 @@ async function main() {
     console.log(`Default Action: ${permConfig.defaultAction.toUpperCase()}\n`);
     for (const r of permConfig.rules) {
       const pat = r.pattern ? ` [pattern: ${r.pattern}]` : "";
-      console.log(`• [${r.action.toUpperCase()}] ${r.tool}${pat}\n  ${r.description ?? "No description"}`);
+      console.log(
+        `• [${r.action.toUpperCase()}] ${r.tool}${pat}\n  ${r.description ?? "No description"}`,
+      );
     }
     return;
   }
@@ -567,7 +774,10 @@ async function main() {
   // --skills
   if (args.includes("--skills")) {
     const skills = loadAllSkills();
-    if (skills.length === 0) { console.log("No skills found in .agents/skills/"); return; }
+    if (skills.length === 0) {
+      console.log("No skills found in .agents/skills/");
+      return;
+    }
     console.log("Available Skills:\n" + "─".repeat(68));
     for (const s of skills) {
       const toolInfo = s.tools ? ` [tools: ${s.tools.join(", ")}]` : "";
@@ -579,10 +789,15 @@ async function main() {
   // --list
   if (args.includes("--list") || args.includes("-l")) {
     const sessions = listAllSessions();
-    if (sessions.length === 0) { console.log("No saved sessions found."); return; }
+    if (sessions.length === 0) {
+      console.log("No saved sessions found.");
+      return;
+    }
     console.log("Saved Sessions:\n" + "─".repeat(68));
     for (const s of sessions) {
-      console.log(`• ID: ${s.id} | ${s.messageCount} msgs | ${s.updatedAt}\n  Title: ${s.title}`);
+      console.log(
+        `• ID: ${s.id} | ${s.messageCount} msgs | ${s.updatedAt}\n  Title: ${s.title}`,
+      );
     }
     return;
   }
@@ -591,7 +806,11 @@ async function main() {
   const delIdx = args.findIndex((a) => a === "--delete");
   if (delIdx !== -1 && args[delIdx + 1]) {
     const id = args[delIdx + 1];
-    console.log(deleteSessionById(id) ? `✅ Deleted session '${id}'.` : `❌ Session '${id}' not found.`);
+    console.log(
+      deleteSessionById(id)
+        ? `✅ Deleted session '${id}'.`
+        : `❌ Session '${id}' not found.`,
+    );
     return;
   }
 

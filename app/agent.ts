@@ -3,10 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { exec } from "node:child_process";
 import { McpClient, type McpToolSchema } from "./mcp-client.ts";
-import {
-  appendSessionMessage,
-  trimContextMessages,
-} from "./session.ts";
+import { appendSessionMessage, trimContextMessages } from "./session.ts";
 import { loadAllSkills, matchSkill } from "./skills.ts";
 import { performWebSearch, formatSearchResults } from "./web-search.ts";
 import {
@@ -28,14 +25,14 @@ const MCP_CONFIG_PATH = path.resolve(process.cwd(), ".agents", "mcp.json");
 
 // ANSI color helpers
 const colors = {
-  dim:        (s: string) => `\x1b[2m${s}\x1b[0m`,
-  bold:       (s: string) => `\x1b[1m${s}\x1b[0m`,
-  boldCyan:   (s: string) => `\x1b[1;36m${s}\x1b[0m`,
-  boldMagenta:(s: string) => `\x1b[1;35m${s}\x1b[0m`,
+  dim: (s: string) => `\x1b[2m${s}\x1b[0m`,
+  bold: (s: string) => `\x1b[1m${s}\x1b[0m`,
+  boldCyan: (s: string) => `\x1b[1;36m${s}\x1b[0m`,
+  boldMagenta: (s: string) => `\x1b[1;35m${s}\x1b[0m`,
   boldYellow: (s: string) => `\x1b[1;33m${s}\x1b[0m`,
-  gray:       (s: string) => `\x1b[90m${s}\x1b[0m`,
-  red:        (s: string) => `\x1b[31m${s}\x1b[0m`,
-  green:      (s: string) => `\x1b[32m${s}\x1b[0m`,
+  gray: (s: string) => `\x1b[90m${s}\x1b[0m`,
+  red: (s: string) => `\x1b[31m${s}\x1b[0m`,
+  green: (s: string) => `\x1b[32m${s}\x1b[0m`,
 };
 
 // Types
@@ -59,7 +56,8 @@ export function resolveFilePath(raw: any): string {
   if (fs.existsSync(filePath)) return filePath;
 
   const relative = filePath.replace(/^[/\\]+/, "");
-  if (relative && fs.existsSync(relative)) return path.resolve(process.cwd(), relative);
+  if (relative && fs.existsSync(relative))
+    return path.resolve(process.cwd(), relative);
 
   const stripped = filePath.replace(PLACEHOLDER_RE, "");
   if (stripped && stripped !== filePath) {
@@ -80,7 +78,11 @@ export function parseToolArguments(raw: any): Record<string, any> {
   if (typeof raw === "object" && raw !== null) return raw;
   if (typeof raw === "string") {
     const trimmed = raw.trim();
-    try { return JSON.parse(trimmed); } catch { /* fallback */ }
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      /* fallback */
+    }
     if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
       return { file_path: trimmed, command: trimmed };
     }
@@ -89,7 +91,9 @@ export function parseToolArguments(raw: any): Record<string, any> {
         .replace(/'/g, '"')
         .replace(/([{,]\s*)([a-zA-Z0-9_]+)\s*:/g, '$1"$2":');
       return JSON.parse(fixed);
-    } catch { return {}; }
+    } catch {
+      return {};
+    }
   }
   return {};
 }
@@ -105,17 +109,26 @@ export function extractEmbeddedToolCall(
   let m: RegExpExecArray | null;
   while ((m = codeBlock.exec(content)) !== null) candidates.push(m[1]);
 
-  let depth = 0, start = -1;
+  let depth = 0,
+    start = -1;
   for (let i = 0; i < content.length; i++) {
-    if (content[i] === "{") { if (depth++ === 0) start = i; }
-    else if (content[i] === "}" && depth > 0) {
-      if (--depth === 0 && start !== -1) { candidates.push(content.slice(start, i + 1)); start = -1; }
+    if (content[i] === "{") {
+      if (depth++ === 0) start = i;
+    } else if (content[i] === "}" && depth > 0) {
+      if (--depth === 0 && start !== -1) {
+        candidates.push(content.slice(start, i + 1));
+        start = -1;
+      }
     }
   }
 
   for (const raw of candidates) {
     let parsed: any = null;
-    try { parsed = JSON.parse(raw); } catch { /* fallback */ }
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      /* fallback */
+    }
 
     if (!parsed) {
       try {
@@ -123,13 +136,17 @@ export function extractEmbeddedToolCall(
           .replace(/([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, '$1"$2":')
           .replace(/:\s*([A-Za-z][A-Za-z0-9_]*)(?=[,}\s])/g, ': "$1"');
         parsed = JSON.parse(fixed);
-      } catch { continue; }
+      } catch {
+        continue;
+      }
     }
 
     if (!parsed || typeof parsed !== "object") continue;
 
-    const toolName: string = parsed.name ?? parsed.function ?? parsed.tool ?? "";
-    const toolArgs = parsed.arguments ?? parsed.parameters ?? parsed.args ?? null;
+    const toolName: string =
+      parsed.name ?? parsed.function ?? parsed.tool ?? "";
+    const toolArgs =
+      parsed.arguments ?? parsed.parameters ?? parsed.args ?? null;
 
     if (!knownTools.has(toolName) || !toolArgs) continue;
 
@@ -138,7 +155,8 @@ export function extractEmbeddedToolCall(
       type: "function",
       function: {
         name: toolName,
-        arguments: typeof toolArgs === "string" ? toolArgs : JSON.stringify(toolArgs),
+        arguments:
+          typeof toolArgs === "string" ? toolArgs : JSON.stringify(toolArgs),
       },
     };
   }
@@ -174,7 +192,9 @@ export function extractEmbeddedToolCall(
             arguments: JSON.stringify(parsedArgs),
           },
         };
-      } catch { /* fall through */ }
+      } catch {
+        /* fall through */
+      }
     }
   }
 
@@ -190,7 +210,13 @@ export function cleanAssistantContent(text: string): string {
   clean = clean.replace(/<tool_response>[\s\S]*?<\/tool_response>/gi, "");
   clean = clean.replace(/<[^>]+>/g, "").trim();
   clean = clean.replace(/^[\s,;.!}]+|[\s,;{}]+$/g, "").trim();
-  if (!clean || clean === "{}" || clean === "}" || clean.includes("<none>") || clean.includes('"none"')) {
+  if (
+    !clean ||
+    clean === "{}" ||
+    clean === "}" ||
+    clean.includes("<none>") ||
+    clean.includes('"none"')
+  ) {
     return "";
   }
   return clean;
@@ -209,7 +235,8 @@ export const BUILTIN_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
         properties: {
           file_path: {
             type: "string",
-            description: "Relative or absolute path to the file. Use the real filename — NOT placeholder paths like /path/to/file.",
+            description:
+              "Relative or absolute path to the file. Use the real filename — NOT placeholder paths like /path/to/file.",
           },
         },
       },
@@ -219,13 +246,20 @@ export const BUILTIN_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "Write",
-      description: "Write content to a file, creating it (and any parent directories) if needed.",
+      description:
+        "Write content to a file, creating it (and any parent directories) if needed.",
       parameters: {
         type: "object",
         required: ["file_path", "content"],
         properties: {
-          file_path: { type: "string", description: "Path where the file should be written." },
-          content: { type: "string", description: "The full content to write." },
+          file_path: {
+            type: "string",
+            description: "Path where the file should be written.",
+          },
+          content: {
+            type: "string",
+            description: "The full content to write.",
+          },
         },
       },
     },
@@ -248,7 +282,8 @@ export const BUILTIN_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "WebSearch",
-      description: "Search the live web for real-time information, documentation, news, or external references.",
+      description:
+        "Search the live web for real-time information, documentation, news, or external references.",
       parameters: {
         type: "object",
         required: ["query"],
@@ -268,7 +303,9 @@ async function loadMcpClients(): Promise<Map<string, McpClient>> {
   const clients = new Map<string, McpClient>();
   if (!fs.existsSync(MCP_CONFIG_PATH)) return clients;
 
-  let config: { servers?: Array<{ id: string; command: string; args?: string[] }> };
+  let config: {
+    servers?: Array<{ id: string; command: string; args?: string[] }>;
+  };
   try {
     config = JSON.parse(fs.readFileSync(MCP_CONFIG_PATH, "utf-8"));
   } catch (e: any) {
@@ -282,7 +319,9 @@ async function loadMcpClients(): Promise<Map<string, McpClient>> {
       await client.connect();
       clients.set(srv.id, client);
     } catch (e: any) {
-      process.stderr.write(`[MCP] Failed to connect "${srv.id}": ${e.message}\n`);
+      process.stderr.write(
+        `[MCP] Failed to connect "${srv.id}": ${e.message}\n`,
+      );
     }
   }
 
@@ -307,7 +346,8 @@ export async function runAgentMode(
   });
   const model = process.env.MODEL ?? "qwen2.5-coder:7b-instruct-q3_k_m";
   const modelInfo = resolveModel(model);
-  const agentName = modelInfo.name || process.env.AGENT_NAME || "an expert coding assistant";
+  const agentName =
+    modelInfo.name || process.env.AGENT_NAME || "an expert coding assistant";
 
   // Discover and merge MCP tools
   const mcpClients = await loadMcpClients();
@@ -322,13 +362,20 @@ export async function runAgentMode(
   // Enforce tool restrictions if active skill specifies allowed tools
   if (activeSkill?.tools && activeSkill.tools.length > 0) {
     const allowedSet = new Set(activeSkill.tools);
-    allTools = allTools.filter((t) =>
-      allowedSet.has(t.function.name) ||
-      allowedSet.has(t.function.name.replace(/^mcp__[^_]+__/, "")),
+    allTools = allTools.filter(
+      (t) =>
+        allowedSet.has(t.function.name) ||
+        allowedSet.has(t.function.name.replace(/^mcp__[^_]+__/, "")),
     );
   }
 
-  const allToolNames = new Set(["Read", "Write", "Bash", "WebSearch", ...allTools.map((t) => t.function.name)]);
+  const allToolNames = new Set([
+    "Read",
+    "Write",
+    "Bash",
+    "WebSearch",
+    ...allTools.map((t) => t.function.name),
+  ]);
 
   // Notify skill activation in terminal
   if (activeSkill) {
@@ -339,12 +386,14 @@ export async function runAgentMode(
 
   // System prompt
   if (messages.length === 0 || messages[0].role !== "system") {
-    const mcpList = mcpTools.length > 0
-      ? `\nMCP tools available: ${mcpTools.map((t) => t.function.name.replace(/^mcp__[^_]+__/, "")).join(", ")}.`
-      : "";
-    const skillList = skills.length > 0
-      ? `\nAvailable skills: ${skills.map((s) => s.name).join(", ")}.`
-      : "";
+    const mcpList =
+      mcpTools.length > 0
+        ? `\nMCP tools available: ${mcpTools.map((t) => t.function.name.replace(/^mcp__[^_]+__/, "")).join(", ")}.`
+        : "";
+    const skillList =
+      skills.length > 0
+        ? `\nAvailable skills: ${skills.map((s) => s.name).join(", ")}.`
+        : "";
     const activeSkillPrompt = activeSkill
       ? `\n\n--- ACTIVE SKILL: ${activeSkill.name} ---\n${activeSkill.instructions}\n----------------------------------`
       : "";
@@ -362,7 +411,8 @@ Never output raw JSON tool calls in your final response.`,
 
   // User message
   messages.push({ role: "user", content: prompt });
-  if (sessionFilePath) appendSessionMessage(sessionFilePath, { role: "user", content: prompt });
+  if (sessionFilePath)
+    appendSessionMessage(sessionFilePath, { role: "user", content: prompt });
 
   const actionLog: string[] = [];
   const MAX_TURNS = 8;
@@ -382,7 +432,10 @@ Never output raw JSON tool calls in your final response.`,
       });
 
       let fullContent = "";
-      const toolCallsMap = new Map<number, { id?: string; name: string; args: string }>();
+      const toolCallsMap = new Map<
+        number,
+        { id?: string; name: string; args: string }
+      >();
 
       for await (const chunk of stream) {
         const delta = chunk.choices[0]?.delta;
@@ -398,7 +451,11 @@ Never output raw JSON tool calls in your final response.`,
         if (delta.tool_calls) {
           for (const tc of delta.tool_calls) {
             const idx = tc.index ?? 0;
-            const existing = toolCallsMap.get(idx) ?? { id: tc.id, name: "", args: "" };
+            const existing = toolCallsMap.get(idx) ?? {
+              id: tc.id,
+              name: "",
+              args: "",
+            };
             if (tc.id) existing.id = tc.id;
             if (tc.function?.name) existing.name += tc.function.name;
             if (tc.function?.arguments) existing.args += tc.function.arguments;
@@ -456,30 +513,51 @@ Never output raw JSON tool calls in your final response.`,
         const isMcp = toolName.startsWith("mcp__");
 
         const summary =
-          toolName === "Read"      ? `📖 Reading  ${filePath}`
-          : toolName === "Write"   ? `📝 Writing  ${filePath}`
-          : toolName === "WebSearch" ? `🌐 Searching: "${args.query ?? ""}"`
-          : isMcp                   ? `🔌 MCP: ${toolName.replace(/^mcp__[^_]+__/, "")}`
-          : `⚡ Running: ${args.command ?? ""}`;
+          toolName === "Read"
+            ? `📖 Reading  ${filePath}`
+            : toolName === "Write"
+              ? `📝 Writing  ${filePath}`
+              : toolName === "WebSearch"
+                ? `🌐 Searching: "${args.query ?? ""}"`
+                : isMcp
+                  ? `🔌 MCP: ${toolName.replace(/^mcp__[^_]+__/, "")}`
+                  : `⚡ Running: ${args.command ?? ""}`;
 
         // Target resource for permission evaluation
         const target =
-          toolName === "Bash" ? String(args.command ?? "")
-          : toolName === "WebSearch" ? String(args.query ?? "")
-          : isMcp ? toolName.split("__").slice(2).join("__")
-          : filePath;
+          toolName === "Bash"
+            ? String(args.command ?? "")
+            : toolName === "WebSearch"
+              ? String(args.query ?? "")
+              : isMcp
+                ? toolName.split("__").slice(2).join("__")
+                : filePath;
 
         // Evaluate permissions
-        const { action, rule } = evaluatePermission(toolName, target, permConfig, runtimePermCache);
+        const { action, rule } = evaluatePermission(
+          toolName,
+          target,
+          permConfig,
+          runtimePermCache,
+        );
         let result: string | null = null;
 
         if (action === "deny") {
-          process.stdout.write(`  ${colors.dim("↳")} ${colors.red(`[⛔ Denied by policy]`)} ${toolName}: ${target} (${rule?.description ?? "Restricted"})\n`);
+          process.stdout.write(
+            `  ${colors.dim("↳")} ${colors.red(`[⛔ Denied by policy]`)} ${toolName}: ${target} (${rule?.description ?? "Restricted"})\n`,
+          );
           result = `Error: Permission denied by policy for ${toolName}: "${target}". ${rule?.description ? `Reason: ${rule.description}` : ""}`;
         } else if (action === "ask") {
-          const allowed = await promptUserPermission(toolName, summary, target, runtimePermCache);
+          const allowed = await promptUserPermission(
+            toolName,
+            summary,
+            target,
+            runtimePermCache,
+          );
           if (!allowed) {
-            process.stdout.write(`  ${colors.dim("↳")} ${colors.boldYellow(`[Declined by user]`)} ${toolName}\n`);
+            process.stdout.write(
+              `  ${colors.dim("↳")} ${colors.boldYellow(`[Declined by user]`)} ${toolName}\n`,
+            );
             result = `Error: User denied permission to execute ${toolName} on "${target}".`;
           }
         }
@@ -489,7 +567,9 @@ Never output raw JSON tool calls in your final response.`,
           if (notifyTool) {
             notifyTool(toolName, summary);
           } else {
-            process.stdout.write(`  ${colors.dim("↳")} ${colors.boldCyan(`[${toolName}]`)} ${colors.gray(summary)}\n`);
+            process.stdout.write(
+              `  ${colors.dim("↳")} ${colors.boldCyan(`[${toolName}]`)} ${colors.gray(summary)}\n`,
+            );
           }
         }
 
@@ -501,9 +581,11 @@ Never output raw JSON tool calls in your final response.`,
             result = fs.existsSync(filePath)
               ? fs.readFileSync(filePath, "utf-8")
               : `Error: file not found: ${filePath}`;
-            if (!result.startsWith("Error:")) actionLog.push(`Read ${filePath}`);
-          } catch (e: any) { result = `Error reading ${filePath}: ${e.message}`; }
-
+            if (!result.startsWith("Error:"))
+              actionLog.push(`Read ${filePath}`);
+          } catch (e: any) {
+            result = `Error reading ${filePath}: ${e.message}`;
+          }
         } else if (toolName === "Write") {
           try {
             const dir = path.dirname(filePath);
@@ -511,12 +593,16 @@ Never output raw JSON tool calls in your final response.`,
             fs.writeFileSync(filePath, args.content ?? "", "utf-8");
             result = `Written: ${filePath}`;
             actionLog.push(`Wrote ${filePath}`);
-          } catch (e: any) { result = `Error writing ${filePath}: ${e.message}`; }
-
+          } catch (e: any) {
+            result = `Error writing ${filePath}: ${e.message}`;
+          }
         } else if (toolName === "Bash") {
           let command = args.command ?? "";
           if (typeof command === "object" && command !== null) {
-            command = (command as any).command ?? (command as any).cmd ?? String(command);
+            command =
+              (command as any).command ??
+              (command as any).cmd ??
+              String(command);
           }
           try {
             result = await new Promise<string>((resolve) => {
@@ -526,8 +612,9 @@ Never output raw JSON tool calls in your final response.`,
               });
             });
             actionLog.push(`Ran: ${command}`);
-          } catch (e: any) { result = `Error: ${e.message}`; }
-
+          } catch (e: any) {
+            result = `Error: ${e.message}`;
+          }
         } else if (toolName === "WebSearch") {
           const query = String(args.query ?? "").trim();
           try {
@@ -537,7 +624,6 @@ Never output raw JSON tool calls in your final response.`,
           } catch (e: any) {
             result = `Error executing web search: ${e.message}`;
           }
-
         } else if (isMcp) {
           const [, serverId, ...rest] = toolName.split("__");
           const localName = rest.join("__");
@@ -548,9 +634,10 @@ Never output raw JSON tool calls in your final response.`,
             try {
               result = await mcpClient.callTool(localName, args);
               actionLog.push(`MCP[${serverId}] ${localName}`);
-            } catch (e: any) { result = `Error calling ${localName}: ${e.message}`; }
+            } catch (e: any) {
+              result = `Error calling ${localName}: ${e.message}`;
+            }
           }
-
         } else {
           result = `Unknown tool: ${toolName}`;
         }
