@@ -15,6 +15,7 @@ import {
   promptUserPermission,
   type PermissionAction,
 } from "./permissions.ts";
+import { resolveModel } from "./models.ts";
 
 // Constants
 const PLACEHOLDER_RE =
@@ -304,8 +305,9 @@ export async function runAgentMode(
     apiKey,
     baseURL: process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1",
   });
-  const model = process.env.MODEL ?? "anthropic/claude-haiku-4.5";
-  const agentName = process.env.AGENT_NAME ?? "an expert coding assistant";
+  const model = process.env.MODEL ?? "qwen2.5-coder:7b-instruct-q3_k_m";
+  const modelInfo = resolveModel(model);
+  const agentName = modelInfo.name || process.env.AGENT_NAME || "an expert coding assistant";
 
   // Discover and merge MCP tools
   const mcpClients = await loadMcpClients();

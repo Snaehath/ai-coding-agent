@@ -13,6 +13,12 @@ import {
 import { loadAllSkills } from "./skills.ts";
 import { loadPermissionConfig } from "./permissions.ts";
 import { loadAllCommands, expandCommandTemplate } from "./commands.ts";
+import {
+  REGISTERED_MODELS,
+  determineActiveModel,
+  resolveModel,
+  validateModelAvailability,
+} from "./models.ts";
 
 // ANSI terminal colors
 export const colors = {
@@ -240,12 +246,27 @@ async function runReplMode(options: { isContinue?: boolean; resumeId?: string })
         }
 
         case "/model": {
-          const newModel = rest[0];
-          if (newModel) {
-            process.env.MODEL = newModel;
-            console.log(colors.green(`✨ Active model changed to: ${newModel}\n`));
+          const rawArg = rest[0];
+          if (rawArg) {
+            const targetModel = resolveModel(rawArg);
+            process.env.MODEL = targetModel.id;
+            console.log(colors.green(`✨ Active model switched to: ${colors.boldCyan(targetModel.name)} (${targetModel.id})`));
+            console.log(colors.gray(`   Creator: ${targetModel.creator} · License: ${targetModel.license} · ${targetModel.vramUsage}`));
+            console.log(colors.dim(`   Capabilities: ${targetModel.capabilities.join(", ")}\n`));
           } else {
-            console.log(`\nActive Model: ${colors.boldCyan(currentModel())}\nUsage: ${colors.yellow("/model <model-name>")}\n`);
+            const currentId = currentModel();
+            console.log("\n" + colors.bold("Available Models:"));
+            console.log(colors.gray("─".repeat(68)));
+            for (const m of REGISTERED_MODELS) {
+              const isActive = m.id.toLowerCase() === currentId.toLowerCase() || m.aliases.includes(currentId.toLowerCase());
+              const badge = isActive ? colors.boldGreen(" [ACTIVE]") : "";
+              console.log(`${colors.boldCyan("• " + m.name)}${badge}`);
+              console.log(`  ID: ${colors.dim(m.id)} · Aliases: ${colors.yellow(m.aliases.join(", "))}`);
+              console.log(`  Creator: ${m.creator} · License: ${m.license} · ${m.vramUsage}`);
+              console.log(`  Good at: ${colors.gray(m.description)}`);
+              console.log(`  Capabilities: ${colors.italic(m.capabilities.join(" · "))}\n`);
+            }
+            console.log(`Usage: ${colors.boldYellow("/model granite")} or ${colors.boldYellow("/model qwen")}\n`);
           }
           break;
         }
@@ -507,6 +528,29 @@ async function main() {
   const isContinue = args.includes("--continue") || args.includes("-c");
   const resumeIdx = args.findIndex((a) => a === "--resume" || a === "-r");
   const resumeId = resumeIdx !== -1 ? args[resumeIdx + 1] : undefined;
+
+  // Resolve active model following precedence: CLI flag > .agents/models.json > .env > default
+  const modelFlagIdx = args.findIndex((a) => a === "--model" || a === "-m");
+  const cliModelArg = modelFlagIdx !== -1 ? args[modelFlagIdx + 1] : undefined;
+  const activeModelId = determineActiveModel(cliModelArg);
+  process.env.MODEL = activeModelId;
+
+  // --models / --list-models
+  if (args.includes("--models") || args.includes("--list-models")) {
+    const currentId = process.env.MODEL ?? activeModelId;
+    console.log("Available AI Models:\n" + "─".repeat(68));
+    for (const m of REGISTERED_MODELS) {
+      const isActive = m.id.toLowerCase() === currentId.toLowerCase() || m.aliases.includes(currentId.toLowerCase());
+      const badge = isActive ? " [ACTIVE]" : "";
+      console.log(`• ${m.name}${badge}`);
+      console.log(`  ID: ${m.id} | Aliases: ${m.aliases.join(", ")}`);
+      console.log(`  Creator: ${m.creator} | License: ${m.license} | ${m.vramUsage}`);
+      console.log(`  Good at: ${m.description}`);
+      console.log(`  Capabilities: ${m.capabilities.join(" · ")}\n`);
+    }
+    console.log(`Switch model with: -m granite or -m qwen`);
+    return;
+  }
 
   // --permissions
   if (args.includes("--permissions")) {
