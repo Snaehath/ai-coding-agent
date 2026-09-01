@@ -12,7 +12,12 @@ import {
 } from "./session.ts";
 import { loadAllSkills } from "./skills.ts";
 import { loadPermissionConfig } from "./permissions.ts";
+import { loadHooksConfig } from "./hooks.ts";
 import { loadAllCommands, expandCommandTemplate } from "./commands.ts";
+import {
+  aggregateSessionTelemetry,
+  formatTelemetryBox,
+} from "./telemetry.ts";
 import {
   REGISTERED_MODELS,
   determineActiveModel,
@@ -128,6 +133,7 @@ async function runReplMode(options: {
 
   const sessionId = () => path.basename(currentSessionFile, ".jsonl");
   const currentModel = () => process.env.MODEL ?? "anthropic/claude-haiku-4.5";
+  const sessionStartTime = Date.now();
 
   // Welcome banner
   console.log(
@@ -260,6 +266,8 @@ async function runReplMode(options: {
               `\n  ${colors.boldYellow("/paste")}            Start multi-line paste mode` +
               `\n  ${colors.boldYellow("/skills")}           List available skills` +
               `\n  ${colors.boldYellow("/permissions")}      List active permission policies` +
+              `\n  ${colors.boldYellow("/hooks")}            List active lifecycle hooks` +
+              `\n  ${colors.boldYellow("/stats")}            View real-time agent telemetry & metrics` +
               `\n  ${colors.boldYellow("/clear")} | ${colors.boldYellow("/new")}     Start a fresh session` +
               `\n  ${colors.boldYellow("/sessions")} | ${colors.boldYellow("/list")} List saved sessions` +
               `\n  ${colors.boldYellow("/resume <id>")}    Resume an existing session` +
@@ -440,6 +448,32 @@ async function runReplMode(options: {
             }
             console.log();
           }
+          break;
+        }
+
+        case "/hooks": {
+          const hooksConfig = loadHooksConfig();
+          console.log("\n" + colors.bold("Active Lifecycle Hooks:"));
+          console.log(colors.gray("─".repeat(68)));
+          console.log(
+            `Status: ${hooksConfig.enabled !== false ? colors.boldGreen("ENABLED") : colors.red("DISABLED")}\n`,
+          );
+          for (const h of hooksConfig.hooks) {
+            const toolStr = h.tool ? ` [tool: ${h.tool}]` : "";
+            const actionStr = h.action ? ` [action: ${h.action}]` : "";
+            const cmdStr = h.command ? ` [cmd: ${h.command}]` : "";
+            console.log(
+              `• ${colors.boldMagenta(h.event)}${colors.cyan(toolStr)}${colors.yellow(actionStr)}${colors.gray(cmdStr)}\n  ${colors.dim(h.description ?? "No description")}`,
+            );
+          }
+          console.log();
+          break;
+        }
+
+        case "/stats":
+        case "/telemetry": {
+          const summary = aggregateSessionTelemetry(sessionId(), sessionStartTime);
+          console.log("\n" + formatTelemetryBox(summary) + "\n");
           break;
         }
 
@@ -783,6 +817,15 @@ async function main() {
       const toolInfo = s.tools ? ` [tools: ${s.tools.join(", ")}]` : "";
       console.log(`• ${s.name}${toolInfo}\n  ${s.description}`);
     }
+    return;
+  }
+
+  // --stats / --telemetry
+  if (args.includes("--stats") || args.includes("--telemetry")) {
+    const latest = getLatestSessionFile();
+    const sId = latest ? path.basename(latest, ".jsonl") : "default";
+    const summary = aggregateSessionTelemetry(sId, Date.now() - 60000);
+    console.log("\n" + formatTelemetryBox(summary) + "\n");
     return;
   }
 

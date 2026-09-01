@@ -14,6 +14,13 @@ import {
 } from "./permissions.ts";
 import { resolveModel } from "./models.ts";
 import { lspService } from "./lsp-service.ts";
+import { executeHooks, loadHooksConfig } from "./hooks.ts";
+import {
+  recordTurnTelemetry,
+  estimateTokens,
+  estimateMessagesTokens,
+  fetchModelContextStats,
+} from "./telemetry.ts";
 
 // Constants
 const PLACEHOLDER_RE =
@@ -584,12 +591,22 @@ Use tools to answer requests (Read, Write, Bash, WebSearch, LSP_Definition, LSP_
   const MAX_TURNS = 8;
   let turns = 0;
 
-  // Load permission configuration and runtime session cache
+  // Load permission and hooks configuration
   const permConfig = loadPermissionConfig();
   const runtimePermCache = new Map<string, PermissionAction>();
+  const hooksConfig = loadHooksConfig();
+  const sessionId = sessionFilePath
+    ? path.basename(sessionFilePath, ".jsonl")
+    : "session_" + Date.now().toString(36);
+  const modelStats = await fetchModelContextStats(model);
 
   try {
     while (turns++ < MAX_TURNS) {
+      const turnStart = performance.now();
+      let firstTokenTime = 0;
+      let turnToolTimeMs = 0;
+      let turnErrors = 0;
+
       const stream = await llm.chat.completions.create({
         model,
         messages: trimContextMessages(messages),
@@ -606,6 +623,10 @@ Use tools to answer requests (Read, Write, Bash, WebSearch, LSP_Definition, LSP_
       for await (const chunk of stream) {
         const delta = chunk.choices[0]?.delta;
         if (!delta) continue;
+
+        if (delta.content || delta.tool_calls) {
+          if (!firstTokenTime) firstTokenTime = performance.now();
+        }
 
         if (delta.content) {
           fullContent += delta.content;
@@ -664,6 +685,38 @@ Use tools to answer requests (Read, Write, Bash, WebSearch, LSP_Definition, LSP_
 
       // Final response check
       if (toolCalls.length === 0) {
+        const turnEnd = performance.now();
+        const ttft_ms = firstTokenTime
+          ? Math.round(firstTokenTime - turnStart)
+          : Math.round(turnEnd - turnStart);
+        const generation_time_ms = firstTokenTime
+          ? Math.round(turnEnd - firstTokenTime)
+          : 0;
+        const output_tokens = estimateTokens(fullContent);
+        const input_tokens = estimateMessagesTokens(messages);
+        const context_tokens = input_tokens + output_tokens;
+        const genSec = generation_time_ms / 1000;
+        const tokens_per_second =
+          genSec > 0 ? Math.round((output_tokens / genSec) * 10) / 10 : 0;
+
+        recordTurnTelemetry({
+          session_id: sessionId,
+          turn: turns,
+          model: model,
+          input_tokens,
+          output_tokens,
+          context_tokens,
+          model_context_limit: modelStats.modelContextLength,
+          configured_context_limit: modelStats.configuredContextLength,
+          ttft_ms,
+          generation_time_ms,
+          tokens_per_second,
+          tool_calls: 0,
+          tool_time_ms: 0,
+          errors: 0,
+          timestamp: new Date().toISOString(),
+        });
+
         const cleaned = cleanAssistantContent(fullContent);
         const finalContent =
           cleaned ||
@@ -785,6 +838,17 @@ Use tools to answer requests (Read, Write, Bash, WebSearch, LSP_Definition, LSP_
             );
           }
         }
+
+        // Trigger pre_tool_call lifecycle hooks (e.g. automatic backup)
+        if (result === null) {
+          await executeHooks(
+            "pre_tool_call",
+            { toolName, filePath, target, args },
+            hooksConfig,
+          );
+        }
+
+        const toolExecStart = performance.now();
 
         // Tool handlers (only execute if not blocked by permission)
         if (result !== null) {
@@ -908,11 +972,63 @@ Use tools to answer requests (Read, Write, Bash, WebSearch, LSP_Definition, LSP_
           result = `Unknown tool: ${toolName}`;
         }
 
+        turnToolTimeMs += performance.now() - toolExecStart;
+        if (
+          result &&
+          (result.startsWith("Error:") ||
+            result.startsWith("Error reading") ||
+            result.startsWith("Error writing"))
+        ) {
+          turnErrors++;
+        }
+
+        // Trigger post_tool_call lifecycle hooks
+        await executeHooks(
+          "post_tool_call",
+          { toolName, filePath, target, args, result },
+          hooksConfig,
+        );
+
         // Record tool result
         const toolMsg = { role: "tool", tool_call_id: tc.id, content: result };
         messages.push(toolMsg);
         if (sessionFilePath) appendSessionMessage(sessionFilePath, toolMsg);
       }
+
+      // Record telemetry for tool execution turn
+      const turnEnd = performance.now();
+      const ttft_ms = firstTokenTime
+        ? Math.round(firstTokenTime - turnStart)
+        : Math.round(turnEnd - turnStart);
+      const generation_time_ms = firstTokenTime
+        ? Math.round(turnEnd - firstTokenTime)
+        : 0;
+      const output_tokens =
+        estimateTokens(fullContent) +
+        estimateTokens(JSON.stringify(toolCalls));
+      const input_tokens = estimateMessagesTokens(messages);
+      const context_tokens = input_tokens + output_tokens;
+      const genSec = generation_time_ms / 1000;
+      const tokens_per_second =
+        genSec > 0 ? Math.round((output_tokens / genSec) * 10) / 10 : 0;
+
+      recordTurnTelemetry({
+        session_id: sessionId,
+        turn: turns,
+        model: model,
+        input_tokens,
+        output_tokens,
+        context_tokens,
+        model_context_limit: modelStats.modelContextLength,
+        configured_context_limit: modelStats.configuredContextLength,
+        ttft_ms,
+        generation_time_ms,
+        tokens_per_second,
+        tool_calls: toolCalls.length,
+        tool_time_ms: Math.round(turnToolTimeMs),
+        errors: turnErrors,
+        timestamp: new Date().toISOString(),
+      });
     }
 
     // Turn limit fallback
@@ -922,6 +1038,13 @@ Use tools to answer requests (Read, Write, Bash, WebSearch, LSP_Definition, LSP_
         : "⚠️ Turn limit reached without a final answer.";
     return limitMsg;
   } finally {
+    // Trigger on_session_end lifecycle hooks
+    await executeHooks(
+      "on_session_end",
+      { actionLog, sessionId },
+      hooksConfig,
+    );
+
     // Cleanup MCP clients and LSP servers
     for (const c of mcpClients.values()) c.close();
     lspService.closeAll();
