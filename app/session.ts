@@ -42,7 +42,7 @@ export function getLatestSessionFile(): string | null {
   return files.length > 0 ? files[0].p : null;
 }
 
-// Load messages from session file
+// Load chat messages from session file (excluding telemetry records)
 export function loadSessionMessages(sessionFilePath: string): any[] {
   if (!fs.existsSync(sessionFilePath)) return [];
   return fs
@@ -50,14 +50,23 @@ export function loadSessionMessages(sessionFilePath: string): any[] {
     .split("\n")
     .filter((l) => l.trim())
     .flatMap((l) => {
-      try { return [JSON.parse(l)]; } catch { return []; }
+      try {
+        const obj = JSON.parse(l);
+        if (obj.type === "telemetry") return [];
+        return [obj];
+      } catch {
+        return [];
+      }
     });
 }
 
 // Get session file by ID
 export function getSessionFileByID(sessionId: string): string {
   ensureSessionDir();
-  const fullPath = path.join(SESSION_DIR, `${sessionId.replace(/\.jsonl$/, "")}.jsonl`);
+  const fullPath = path.join(
+    SESSION_DIR,
+    `${sessionId.replace(/\.jsonl$/, "")}.jsonl`,
+  );
   return fs.existsSync(fullPath) ? fullPath : "";
 }
 
@@ -77,24 +86,55 @@ export function listAllSessions(): SessionInfo[] {
         createdAt: new Date(stat.birthtimeMs || stat.mtimeMs).toISOString(),
         updatedAt: new Date(stat.mtimeMs).toISOString(),
         messageCount: messages.length,
-        title: (lastUser?.content as string | undefined)?.slice(0, 50) ?? "Empty Session",
+        title:
+          (lastUser?.content as string | undefined)?.slice(0, 50) ??
+          "Empty Session",
       };
     })
     .filter((s) => s.messageCount > 0)
-    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    .sort(
+      (a, b) =>
+        new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+    );
 }
 
 // Delete session by ID
 export function deleteSessionById(sessionId: string): boolean {
   const target = getSessionFileByID(sessionId);
-  if (target) { fs.unlinkSync(target); return true; }
+  if (target) {
+    fs.unlinkSync(target);
+    return true;
+  }
   return false;
 }
 
-// Overwrite session file with new message array
+// Overwrite session file with new message array (preserving telemetry records)
 export function rewriteSessionFile(sessionFilePath: string, messages: any[]) {
   ensureSessionDir();
-  const content = messages.map((m) => JSON.stringify(m)).join("\n") + "\n";
+  let telemetryRecords: any[] = [];
+  if (fs.existsSync(sessionFilePath)) {
+    try {
+      telemetryRecords = fs
+        .readFileSync(sessionFilePath, "utf-8")
+        .split("\n")
+        .filter((l) => l.trim())
+        .flatMap((l) => {
+          try {
+            const obj = JSON.parse(l);
+            return obj.type === "telemetry" ? [obj] : [];
+          } catch {
+            return [];
+          }
+        });
+    } catch {
+      telemetryRecords = [];
+    }
+  }
+
+  const content =
+    [...messages, ...telemetryRecords]
+      .map((m) => JSON.stringify(m))
+      .join("\n") + "\n";
   fs.writeFileSync(sessionFilePath, content, { encoding: "utf-8" });
 }
 

@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { SESSION_DIR, ensureSessionDir } from "./session.ts";
 
 // Constants
 export const TELEMETRY_DIR = path.resolve(process.cwd(), ".agents", "telemetry");
@@ -136,30 +137,49 @@ export function estimateMessagesTokens(messages: any[]): number {
   return count;
 }
 
-// Record structured telemetry event to .agents/telemetry/<session_id>.jsonl
+// Record structured telemetry event directly inside .agents/sessions/<session_id>.jsonl
 export function recordTurnTelemetry(event: TurnTelemetryEvent): void {
   try {
-    if (!fs.existsSync(TELEMETRY_DIR)) {
-      fs.mkdirSync(TELEMETRY_DIR, { recursive: true });
-    }
-    const filePath = path.join(TELEMETRY_DIR, `${event.session_id}.jsonl`);
-    fs.appendFileSync(filePath, JSON.stringify(event) + "\n", "utf-8");
+    ensureSessionDir();
+    const cleanId = event.session_id.replace(/\.jsonl$/, "");
+    const sessionFilePath = path.join(SESSION_DIR, `${cleanId}.jsonl`);
+    const record = { type: "telemetry", ...event };
+    fs.appendFileSync(sessionFilePath, JSON.stringify(record) + "\n", "utf-8");
   } catch (e: any) {
     process.stderr.write(`[Telemetry] Failed to record event: ${e.message}\n`);
   }
 }
 
-// Load all events for a session
+// Load all telemetry events directly from .agents/sessions/<sessionId>.jsonl
 export function loadSessionTelemetry(sessionId: string): TurnTelemetryEvent[] {
-  const filePath = path.join(TELEMETRY_DIR, `${sessionId}.jsonl`);
-  if (!fs.existsSync(filePath)) return [];
+  const cleanId = sessionId.replace(/\.jsonl$/, "");
+  const sessionFilePath = path.join(SESSION_DIR, `${cleanId}.jsonl`);
+  const legacyTelemetryPath = path.join(TELEMETRY_DIR, `${cleanId}.jsonl`);
+
+  const targetPath = fs.existsSync(sessionFilePath)
+    ? sessionFilePath
+    : fs.existsSync(legacyTelemetryPath)
+      ? legacyTelemetryPath
+      : null;
+
+  if (!targetPath) return [];
 
   try {
-    const raw = fs.readFileSync(filePath, "utf-8");
+    const raw = fs.readFileSync(targetPath, "utf-8");
     return raw
       .split("\n")
       .filter((l) => l.trim().length > 0)
-      .map((l) => JSON.parse(l));
+      .flatMap((l) => {
+        try {
+          const obj = JSON.parse(l);
+          if (obj.type === "telemetry" || obj.ttft_ms !== undefined) {
+            return [obj as TurnTelemetryEvent];
+          }
+          return [];
+        } catch {
+          return [];
+        }
+      });
   } catch {
     return [];
   }

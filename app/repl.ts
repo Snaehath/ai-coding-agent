@@ -26,6 +26,7 @@ import {
   createMarkdownStreamer,
   renderTerminalMarkdown,
 } from "./markdown.ts";
+import { renderModelBanner } from "./banners.ts";
 
 // ANSI terminal colors
 export const colors = {
@@ -100,12 +101,11 @@ export async function runReplMode(options: {
       colors.dim(" to quit"),
   );
   console.log(
-    colors.dim("  Model: ") +
-      colors.cyan(currentModel()) +
-      colors.dim(" · Session: ") +
+    colors.dim("  Session: ") +
       colors.green(sessionId()) +
-      colors.dim(` (${history.length} msgs)\n`),
+      colors.dim(` (${history.length} msgs)`),
   );
+  console.log(renderModelBanner(currentModel()));
 
   const rl = readline.createInterface({
     input: process.stdin,
@@ -269,16 +269,13 @@ export async function runReplMode(options: {
           if (rawArg) {
             const targetModel = resolveModel(rawArg);
             process.env.MODEL = targetModel.id;
-            console.log(
-              colors.green(
-                `✨ Active model switched to: ${colors.boldCyan(targetModel.name)} (${targetModel.id})\n`,
-              ),
-            );
+            console.log(renderModelBanner(targetModel.id));
           } else {
             rl.pause();
             const chosen = await promptSelectModel(currentModel());
             process.env.MODEL = chosen.id;
             rl.resume();
+            console.log(renderModelBanner(chosen.id));
           }
           break;
         }
