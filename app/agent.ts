@@ -13,6 +13,7 @@ import {
   type PermissionAction,
 } from "./permissions.ts";
 import { resolveModel } from "./models.ts";
+import { lspService } from "./lsp-service.ts";
 
 // Constants
 const PLACEHOLDER_RE =
@@ -43,56 +44,35 @@ export function resolveFilePath(raw: any): string {
   if (!raw) return "";
 
   let filePath: string =
-    typeof raw === "object" && raw !== null
-      ? String(raw.file_path ?? raw.path ?? raw.name ?? "")
-      : String(raw);
+    typeof raw === "string" ? raw : (raw.file_path ?? raw.path ?? "");
 
-  filePath = filePath.trim();
-  // Strip Git Bash prefix
+  // Strip Git Bash /cygdrive or /c/ prefix
   filePath = filePath.replace(/^[A-Za-z]:[/\\]Program Files[/\\]Git[/\\]/i, "");
-  filePath = filePath.replace(/^(?:explain|fix|test)\s+/i, "");
-  if (!filePath) return "";
+  filePath = filePath.replace(/^\/[a-zA-Z]\//, (m) => m[1].toUpperCase() + ":/");
 
-  if (fs.existsSync(filePath)) return filePath;
-
-  const relative = filePath.replace(/^[/\\]+/, "");
-  if (relative && fs.existsSync(relative))
-    return path.resolve(process.cwd(), relative);
-
-  const stripped = filePath.replace(PLACEHOLDER_RE, "");
-  if (stripped && stripped !== filePath) {
-    if (fs.existsSync(stripped)) return path.resolve(process.cwd(), stripped);
-    const strippedRel = stripped.replace(/^[/\\]+/, "");
-    if (strippedRel && fs.existsSync(strippedRel))
-      return path.resolve(process.cwd(), strippedRel);
-  }
-
-  const base = path.basename(filePath);
-  if (base && fs.existsSync(base)) return path.resolve(process.cwd(), base);
-
-  return path.resolve(process.cwd(), stripped || relative || filePath);
+  // Normalize Windows paths
+  return path.isAbsolute(filePath)
+    ? path.normalize(filePath)
+    : path.resolve(process.cwd(), filePath);
 }
 
-// Tool argument parsing
+// Parse tool arguments safely
 export function parseToolArguments(raw: any): Record<string, any> {
-  if (typeof raw === "object" && raw !== null) return raw;
+  if (!raw) return {};
+  if (typeof raw === "object") return raw;
   if (typeof raw === "string") {
-    const trimmed = raw.trim();
     try {
-      return JSON.parse(trimmed);
+      return JSON.parse(raw);
     } catch {
-      /* fallback */
-    }
-    if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
-      return { file_path: trimmed, command: trimmed };
-    }
-    try {
-      const fixed = trimmed
-        .replace(/'/g, '"')
-        .replace(/([{,]\s*)([a-zA-Z0-9_]+)\s*:/g, '$1"$2":');
-      return JSON.parse(fixed);
-    } catch {
-      return {};
+      const trimmed = raw.trim();
+      try {
+        const fixed = trimmed
+          .replace(/'/g, '"')
+          .replace(/([{,]\s*)([a-zA-Z0-9_]+)\s*:/g, '$1"$2":');
+        return JSON.parse(fixed);
+      } catch {
+        return { file_path: trimmed, command: trimmed };
+      }
     }
   }
   return {};
@@ -125,7 +105,16 @@ function matchKnownTool(name: string, knownTools: Set<string>): string | null {
 // Extract embedded tool calls from text
 export function extractEmbeddedToolCall(
   content: string,
-  knownTools: Set<string> = new Set(["Read", "Write", "Bash", "WebSearch"]),
+  knownTools: Set<string> = new Set([
+    "Read",
+    "Write",
+    "Bash",
+    "WebSearch",
+    "LSP_Definition",
+    "LSP_References",
+    "LSP_DocumentSymbols",
+    "LSP_Hover",
+  ]),
 ): any | null {
   const candidates: string[] = [];
 
@@ -337,7 +326,11 @@ export const BUILTIN_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
         type: "object",
         required: ["command"],
         properties: {
-          command: { type: "string", description: "The shell command to run." },
+          command: {
+            type: "string",
+            description:
+              "The shell command to run (e.g. 'ls app/', 'git status', 'cat package.json').",
+          },
         },
       },
     },
@@ -355,6 +348,114 @@ export const BUILTIN_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           query: {
             type: "string",
             description: "The search query to look up on the web.",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "LSP_Definition",
+      description:
+        "Go to definition: Find where a function, class, interface, type, or variable is defined in the codebase.",
+      parameters: {
+        type: "object",
+        required: ["symbol"],
+        properties: {
+          symbol: {
+            type: "string",
+            description: "Name of the symbol (function, class, type) to locate.",
+          },
+          file_path: {
+            type: "string",
+            description: "Optional file path where the symbol is referenced.",
+          },
+          line: {
+            type: "number",
+            description: "Optional 1-indexed line number in file_path.",
+          },
+          character: {
+            type: "number",
+            description: "Optional 1-indexed column number in file_path.",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "LSP_References",
+      description:
+        "Find all references and usages of a symbol across all files in the project.",
+      parameters: {
+        type: "object",
+        required: ["symbol"],
+        properties: {
+          symbol: {
+            type: "string",
+            description: "Name of the symbol or function to find usages for.",
+          },
+          file_path: {
+            type: "string",
+            description: "Optional file path where the symbol is located.",
+          },
+          line: {
+            type: "number",
+            description: "Optional 1-indexed line number.",
+          },
+          character: {
+            type: "number",
+            description: "Optional 1-indexed column number.",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "LSP_DocumentSymbols",
+      description:
+        "Extract document symbols (functions, classes, interfaces, types, methods) from a file.",
+      parameters: {
+        type: "object",
+        required: ["file_path"],
+        properties: {
+          file_path: {
+            type: "string",
+            description: "Path to the file to outline symbols for.",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "LSP_Hover",
+      description:
+        "Get type signatures, docstrings, or preview information for a symbol or location.",
+      parameters: {
+        type: "object",
+        required: ["file_path"],
+        properties: {
+          file_path: {
+            type: "string",
+            description: "Path to the file.",
+          },
+          symbol: {
+            type: "string",
+            description: "Optional symbol name to inspect.",
+          },
+          line: {
+            type: "number",
+            description: "Optional 1-indexed line number.",
+          },
+          character: {
+            type: "number",
+            description: "Optional 1-indexed column number.",
           },
         },
       },
@@ -465,10 +566,11 @@ export async function runAgentMode(
     messages.unshift({
       role: "system",
       content: `You are ${agentName}, an autonomous coding assistant.
-Use tools to answer requests (Read, Write, Bash, WebSearch).
+Use tools to answer requests (Read, Write, Bash, WebSearch, LSP_Definition, LSP_References, LSP_DocumentSymbols, LSP_Hover).
+- When navigating code, finding where symbols/functions are defined, or locating usages across the project, use LSP tools (LSP_Definition, LSP_References, LSP_DocumentSymbols, LSP_Hover).
 - When a file path is mentioned, immediately invoke Read — never ask the user to provide file paths or contents.
 - When asked about real-time events, latest library documentation, current packages, or external web queries, use WebSearch to find up-to-date facts.${mcpList}${skillList}${activeSkillPrompt}
-- IMPORTANT: When a tool returns a result (e.g. current time, directory listing, file contents), immediately present that answer in natural language to the user. Do NOT call the same tool again.
+- IMPORTANT: When a tool returns a result (e.g. current time, directory listing, file contents, code definition), immediately present that answer in natural language to the user. Do NOT call the same tool again.
 - Never output raw JSON tool calls in your final response.`,
     });
   }
@@ -518,6 +620,7 @@ Use tools to answer requests (Read, Write, Bash, WebSearch).
               trimmed.startsWith('"WebSearch"') ||
               trimmed.startsWith('"GetTime"') ||
               trimmed.startsWith('"get_time"') ||
+              trimmed.startsWith('"LSP_') ||
               trimmed.startsWith('["');
             if (!isJsonToolCall) {
               onToken(delta.content);
@@ -619,9 +722,17 @@ Use tools to answer requests (Read, Write, Bash, WebSearch).
               ? `📝 Writing  ${filePath}`
               : toolName === "WebSearch"
                 ? `🌐 Searching: "${args.query ?? ""}"`
-                : isMcp && mcpMatch
-                  ? `🔌 MCP: ${mcpMatch.localName}`
-                  : `⚡ Running: ${args.command ?? ""}`;
+                : toolName === "LSP_Definition"
+                  ? `🔍 LSP Definition: ${args.symbol ?? filePath}`
+                  : toolName === "LSP_References"
+                    ? `🔎 LSP References: ${args.symbol ?? filePath}`
+                    : toolName === "LSP_DocumentSymbols"
+                      ? `📑 LSP Symbols: ${filePath}`
+                      : toolName === "LSP_Hover"
+                        ? `ℹ️ LSP Hover: ${args.symbol ?? filePath}`
+                        : isMcp && mcpMatch
+                          ? `🔌 MCP: ${mcpMatch.localName}`
+                          : `⚡ Running: ${args.command ?? ""}`;
 
         // Target resource for permission evaluation
         const target =
@@ -629,9 +740,11 @@ Use tools to answer requests (Read, Write, Bash, WebSearch).
             ? String(args.command ?? "")
             : toolName === "WebSearch"
               ? String(args.query ?? "")
-              : isMcp && mcpMatch
-                ? mcpMatch.localName
-                : filePath;
+              : toolName.startsWith("LSP_")
+                ? String(args.symbol ?? filePath)
+                : isMcp && mcpMatch
+                  ? mcpMatch.localName
+                  : filePath;
 
         // Evaluate permissions
         const { action, rule } = evaluatePermission(
@@ -724,6 +837,61 @@ Use tools to answer requests (Read, Write, Bash, WebSearch).
           } catch (e: any) {
             result = `Error executing web search: ${e.message}`;
           }
+        } else if (toolName === "LSP_Definition") {
+          try {
+            const locs = await lspService.getDefinition(
+              filePath,
+              Number(args.line ?? 1),
+              Number(args.character ?? 1),
+              args.symbol,
+            );
+            result =
+              locs.length > 0
+                ? `Definition(s) found:\n${locs.map((l) => `  • ${l.filePath}:${l.line}:${l.character} -> "${l.preview}"`).join("\n")}`
+                : `No definition found for "${args.symbol || filePath}".`;
+            actionLog.push(`LSP Definition: ${args.symbol || filePath}`);
+          } catch (e: any) {
+            result = `Error fetching definition: ${e.message}`;
+          }
+        } else if (toolName === "LSP_References") {
+          try {
+            const refs = await lspService.getReferences(
+              filePath,
+              Number(args.line ?? 1),
+              Number(args.character ?? 1),
+              args.symbol,
+            );
+            result =
+              refs.length > 0
+                ? `Reference(s) found (${refs.length}):\n${refs.slice(0, 20).map((r) => `  • ${r.filePath}:${r.line}:${r.character} -> "${r.lineContent}"`).join("\n")}`
+                : `No references found for "${args.symbol || filePath}".`;
+            actionLog.push(`LSP References: ${args.symbol || filePath}`);
+          } catch (e: any) {
+            result = `Error fetching references: ${e.message}`;
+          }
+        } else if (toolName === "LSP_DocumentSymbols") {
+          try {
+            const syms = await lspService.getDocumentSymbols(filePath);
+            result =
+              syms.length > 0
+                ? `Document symbols for ${filePath} (${syms.length}):\n${syms.map((s) => `  • [${s.kind}] ${s.name} (L${s.line}) -> "${s.preview}"`).join("\n")}`
+                : `No symbols found in ${filePath}.`;
+            actionLog.push(`LSP Symbols: ${filePath}`);
+          } catch (e: any) {
+            result = `Error fetching document symbols: ${e.message}`;
+          }
+        } else if (toolName === "LSP_Hover") {
+          try {
+            result = await lspService.getHover(
+              filePath,
+              Number(args.line ?? 1),
+              Number(args.character ?? 1),
+              args.symbol,
+            );
+            actionLog.push(`LSP Hover: ${args.symbol || filePath}`);
+          } catch (e: any) {
+            result = `Error fetching hover information: ${e.message}`;
+          }
         } else if (isMcp && mcpMatch) {
           const mcpClient = mcpClients.get(mcpMatch.serverId);
           if (!mcpClient) {
@@ -754,7 +922,8 @@ Use tools to answer requests (Read, Write, Bash, WebSearch).
         : "⚠️ Turn limit reached without a final answer.";
     return limitMsg;
   } finally {
-    // Cleanup MCP clients
+    // Cleanup MCP clients and LSP servers
     for (const c of mcpClients.values()) c.close();
+    lspService.closeAll();
   }
 }
