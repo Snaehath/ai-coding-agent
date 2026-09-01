@@ -7,6 +7,7 @@ export const MODELS_CONFIG_PATH = path.resolve(
   ".agents",
   "models.json",
 );
+
 const OLLAMA_BASE_URL =
   process.env.OPENROUTER_BASE_URL?.replace(/\/v1\/?$/, "") ??
   "http://localhost:11434";
@@ -17,240 +18,95 @@ export type ModelInfo = {
   name: string;
   creator: string;
   license: string;
+  alias?: string;
   aliases: string[];
   description: string;
   capabilities: string[];
   vramUsage: string;
 };
 
-// Model registry
-export const REGISTERED_MODELS: ModelInfo[] = [
+export type ModelsConfigFile = {
+  defaultModel?: string;
+  models?: any[];
+};
+
+// Fallback models when .agents/models.json is missing
+const FALLBACK_MODELS: ModelInfo[] = [
   {
     id: "granite4.2:3b",
-
     name: "IBM Granite 4.2 3B",
-
     creator: "IBM Research",
-
     license: "Apache 2.0",
-
-    aliases: [
-      "granite",
-      "granite4.2",
-      "granite:3b",
-      "granite4.2:3b",
-      "ibm",
-      "granite42",
-    ],
-
-    description:
-      "Compact enterprise-oriented reasoning model optimized for tool calling, agent workflows, coding, structured outputs, multilingual tasks, and long-context reasoning.",
-
-    capabilities: [
-      "Tool Use",
-      "Thinking / Reasoning",
-      "Reasoning-Augmented Tool Calling",
-      "RAG",
-      "Coding & Refactoring",
-      "Structured JSON Output",
-      "Agentic Workflows",
-      "Multilingual Tasks",
-      "Long Context",
-      "Instruction Following",
-    ],
-
-    vramUsage:
-      "~2.2 GB VRAM for the installed Ollama quantization; additional memory is required for context/KV cache",
+    aliases: ["granite", "granite4.2", "granite:3b", "ibm", "granite42"],
+    description: "Compact enterprise reasoning model optimized for tool calling, coding, and multilingual tasks.",
+    capabilities: ["Tool Use", "Reasoning", "Coding", "Structured Output"],
+    vramUsage: "~2.2 GB VRAM",
   },
   {
     id: "qwen2.5-coder:7b-instruct-q3_k_m",
-
     name: "Qwen 2.5 Coder 7B Instruct",
-
     creator: "Alibaba Qwen",
-
     license: "Apache 2.0",
-
-    aliases: [
-      "qwen",
-      "qwen2.5",
-      "qwen2.5coder",
-      "qwencoder",
-      "qwen-coder",
-      "qwen:7b",
-      "coder",
-    ],
-
-    description:
-      "Code-specialized 7B instruction model designed for code generation, code reasoning, debugging, refactoring, repository understanding, and software engineering tasks.",
-
-    capabilities: [
-      "Deep Code Synthesis",
-      "Code Completion",
-      "Code Reasoning",
-      "Bug Detection",
-      "Debugging",
-      "Refactoring",
-      "Multi-file Code Understanding",
-      "Code Translation",
-      "Algorithm Implementation",
-      "Documentation Generation",
-      "Technical Q&A",
-      "Shell / Automation Code",
-    ],
-
-    vramUsage:
-      "~3.8 GB VRAM for Q3_K_M weights; additional memory is required for the context/KV cache",
-  },
-  {
-    id: "PetrosStav/gemma3-tools:4b",
-    name: "Gemma 3 Tools 4B",
-    creator: "PetrosStav / Google",
-    license: "Gemma Terms of use",
-    aliases: [
-      "gemma",
-      "gemma3",
-      "gemma3:4b",
-      "gemma3-tools",
-      "gemma-tools",
-      "gemma:4b",
-    ],
-
-    description:
-      "Compact multimodal Gemma 3 model modified for reliable tool calling, suitable for lightweight agents, vision tasks, general chat, and local automation.",
-
-    capabilities: [
-      "Tool Use",
-      "Function Calling",
-      "Vision / Image Understanding",
-      "General Chat",
-      "Reasoning",
-      "Question Answering",
-      "Summarization",
-      "Multilingual Tasks",
-      "Agent Workflows",
-      "Long Context",
-    ],
-    vramUsage:
-      "~3.3 GB VRAM for Q4_K_M weights; allow additional VRAM for context/KV cache",
-  },
-  {
-    id: "ministral-3:3b",
-
-    name: "Mistral Ministral 3 3B",
-
-    creator: "Mistral AI",
-
-    license: "Apache 2.0",
-
-    aliases: [
-      "ministral",
-      "ministral3",
-      "ministral-3",
-      "ministral:3b",
-      "mistral",
-      "mistral3",
-    ],
-
-    description:
-      "Ultra-compact multimodal model optimized for edge deployment, function calling, structured output, long-context workloads, and local AI agents.",
-
-    capabilities: [
-      "Tool Use",
-      "Function Calling",
-      "Structured JSON Output",
-      "Vision / Image Understanding",
-      "Agentic Workflows",
-      "Reasoning",
-      "Document Q&A",
-      "Multilingual Tasks",
-      "Long Context",
-      "Instruction Following",
-    ],
-
-    vramUsage:
-      "~3.0 GB VRAM for Q4_K_M weights; additional memory is required for the KV cache and runtime",
-  },
-  {
-    id: "lfm2.5:8b",
-
-    name: "Liquid LFM2.5 8B A1B",
-
-    creator: "Liquid AI",
-
-    license: "LFM 1.0",
-
-    aliases: [
-      "lfm",
-      "lfm2",
-      "lfm2.5",
-      "lfm2.5:8b",
-      "lfm2.5-8b",
-      "liquid",
-    ],
-
-    description:
-      "Efficient on-device Mixture-of-Experts model designed for fast agentic workflows, tool calling, instruction following, and low-latency inference.",
-
-    capabilities: [
-      "Tool Use",
-      "Function Calling",
-      "Agentic Workflows",
-      "Instruction Following",
-      "Multi-Step Tool Chaining",
-      "Structured Output",
-      "Long Context",
-      "On-Device AI",
-      "Low-Latency Inference",
-      "Multilingual Tasks",
-    ],
-
-    vramUsage:
-      "~5.2 GB VRAM for the installed Ollama quantization; runtime context/KV cache requires additional memory",
-  },
-  {
-    id: "qwen3.5:4b",
-
-    name: "Qwen 3.5 4B",
-
-    creator: "Alibaba Qwen",
-
-    license: "Apache 2.0",
-
-    aliases: ["qwen3.5", "qwen3", "qwen3.5:4b", "qwen:4b", "qwen35"],
-
-    description:
-      "Compact multimodal Qwen model combining vision, reasoning, coding, instruction following, and agentic capabilities with an efficient hybrid architecture.",
-
-    capabilities: [
-      "Vision / Image Understanding",
-      "Reasoning",
-      "Coding",
-      "Tool Calling",
-      "Agentic Workflows",
-      "Multilingual Tasks",
-      "Long Context",
-      "Instruction Following",
-      "Document Understanding",
-      "Structured Output",
-    ],
-
-    vramUsage:
-      "~3.4 GB VRAM for the installed Ollama quantization; actual runtime usage increases with context/KV cache",
+    aliases: ["qwen", "qwen2.5", "qwen2.5coder", "qwencoder", "qwen-coder", "coder"],
+    description: "Code-specialized 7B instruction model designed for deep code synthesis and refactoring.",
+    capabilities: ["Deep Code Synthesis", "Debugging", "Refactoring", "Code Translation"],
+    vramUsage: "~3.8 GB VRAM",
   },
 ];
 
-// Fallback default
+// Load models dynamically from .agents/models.json with full normalization
+export function loadRegisteredModels(): ModelInfo[] {
+  if (fs.existsSync(MODELS_CONFIG_PATH)) {
+    try {
+      const raw = fs.readFileSync(MODELS_CONFIG_PATH, "utf-8");
+      const parsed: ModelsConfigFile = JSON.parse(raw);
+      if (Array.isArray(parsed.models) && parsed.models.length > 0) {
+        return parsed.models.map((m: any) => ({
+          id: m.id ?? "",
+          name: m.name ?? m.id ?? "Unknown Model",
+          creator: m.creator ?? "Unknown",
+          license: m.license ?? "Unknown",
+          aliases: Array.isArray(m.aliases)
+            ? m.aliases
+            : typeof m.alias === "string"
+              ? [m.alias]
+              : [],
+          description:
+            m.description ??
+            (Array.isArray(m.capabilities)
+              ? m.capabilities.slice(0, 4).join(" · ")
+              : "Local LLM"),
+          capabilities: Array.isArray(m.capabilities) ? m.capabilities : [],
+          vramUsage: m.vramUsage ?? "Installed in local Ollama",
+        }));
+      }
+    } catch {
+      // Fallback
+    }
+  }
+  return FALLBACK_MODELS;
+}
+
+// Active model registry
+export const REGISTERED_MODELS: ModelInfo[] = loadRegisteredModels();
+
+// Fallback default model ID
 export const DEFAULT_MODEL_ID = "qwen2.5-coder:7b-instruct-q3_k_m";
 
-// Resolve model alias or return raw name
+// Resolve model alias or return custom model info
 export function resolveModel(input: string): ModelInfo {
   const normalized = input.trim().toLowerCase();
+  const models = loadRegisteredModels();
 
   // Match by registered alias or exact ID
-  for (const model of REGISTERED_MODELS) {
+  for (const model of models) {
     if (model.id.toLowerCase() === normalized) return model;
-    if (model.aliases.some((a) => a.toLowerCase() === normalized)) return model;
+    if (
+      Array.isArray(model.aliases) &&
+      model.aliases.some((a) => a.toLowerCase() === normalized)
+    ) {
+      return model;
+    }
   }
 
   // Fallback info for custom/external model strings
@@ -267,7 +123,7 @@ export function resolveModel(input: string): ModelInfo {
 }
 
 // Load default model from .agents/models.json if exists
-export function loadModelConfigFile(): { defaultModel?: string } {
+export function loadModelConfigFile(): ModelsConfigFile {
   if (!fs.existsSync(MODELS_CONFIG_PATH)) return {};
   try {
     const raw = fs.readFileSync(MODELS_CONFIG_PATH, "utf-8");
@@ -318,7 +174,6 @@ export async function validateModelAvailability(modelId: string): Promise<{
 }> {
   const installedModels = await getInstalledOllamaModels();
   if (installedModels.length === 0) {
-    // Cannot reach Ollama or using non-Ollama backend
     return { installed: true, installedModels: [] };
   }
 
