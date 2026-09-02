@@ -40,16 +40,16 @@
   - **`network()` & `runtime()`**: Active network interfaces, local IP, runtime (Bun/Node.js), process PID, and memory RSS.
   - **Hardware-Aware Model Orchestrator**: Automatically recommends and switches to the optimal local model based on real-time VRAM/RAM constraints (e.g. recommending `granite` or `gemma` for 4GB VRAM).
 
-### 🔬 6. Single-Shot Generalized Introspection (`Inspect`)
-- Single-shot environment and codebase discovery primitive so the agent doesn't waste 15 tool calls exploring:
-  - **`inspect("project")`**: Returns framework, runtime, package manager, tests, linters, databases, key scripts, and git branch in 1 call.
-  - **`inspect("environment")`**: OS, CPU cores, system RAM, and available CLI tools in PATH (`bun`, `node`, `git`, `python`, `ollama`, `cargo`, etc.).
-  - **`inspect("process")`**: Process PID, memory usage (RSS/heap), uptime, and platform architecture.
-  - **`inspect("file", path)`**: Line count, byte size, format, and preview.
-  - **`inspect("directory", path)`**: Subdirectory count, file counts, and extension breakdown.
-  - **`inspect("config")`**: Active models, security permission rules, and registered skills.
+### 🔬 6. Causal Failure & Root-Cause Graph Analyzer (`CausalAnalyze`)
+- Different from standard dependency graphs (`A → B → C`), the causal graph constructs multi-layer failure cascades:
+  ```text
+  slow DB ➔ pool saturation ➔ request timeouts ➔ retry storm ➔ cascade failure
+  ```
+- **Capabilities**:
+  - Automatically identifies the true root cause, propagation pathways across layers (`infrastructure`, `database`, `network`, `application`), and the observable symptom.
+  - Generates visual ASCII causal flow charts with specific prevention and remediation steps.
 
-### 🗜️ 6. Context Compression & Low-VRAM Summarization Engine
+### 🗜️ 7. Context Compression & Low-VRAM Summarization Engine
 - Tailored for low-memory local models (3B / 7B / 8B) and tight 4GB VRAM limits so the model never overflows context or chokes on massive 10,000-line files:
   - **`extract_symbols(filePath)`**: Extracts all function signatures, classes, interfaces, and types from a file without keeping the internal bodies (up to **95% token savings**).
   - **`summarize_file(filePath)`**: Generates a high-level compressed skeleton, dependencies, and structural outline.

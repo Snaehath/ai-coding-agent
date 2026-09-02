@@ -48,6 +48,7 @@ import {
   summarizeDiff,
   compressHistory,
 } from "./context-engine.ts";
+import { executeCausalAnalyze } from "./causal-graph.ts";
 
 // Constants
 const PLACEHOLDER_RE =
@@ -156,6 +157,7 @@ export function extractEmbeddedToolCall(
     "SummarizeFile",
     "ContextExtract",
     "SummarizeDiff",
+    "CausalAnalyze",
     "Bash",
     "WebSearch",
     "LSP_Definition",
@@ -819,6 +821,30 @@ export const BUILTIN_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "CausalAnalyze",
+      description:
+        "Causal root-cause and failure cascade analyzer. Instead of a flat dependency list, constructs a multi-step cause ➔ effect chain (e.g. slow DB ➔ connection pool saturation ➔ timeouts ➔ retry storm ➔ cascade failure) with actionable remediation.",
+      parameters: {
+        type: "object",
+        required: ["query"],
+        properties: {
+          query: {
+            type: "string",
+            description:
+              "The symptom, failure, or debugging question to analyze (e.g. 'Why is the application slow?', 'Database timeout error', 'Memory leak / OOM').",
+          },
+          context: {
+            type: "string",
+            description:
+              "Optional log snippet, error message, or stack trace evidence.",
+          },
+        },
+      },
+    },
+  },
 ];
 
 // Initialize tool catalog with core and specialized tools
@@ -835,6 +861,7 @@ function setupToolRegistry(mcpTools: McpToolSchema[] = []) {
     "SummarizeFile",
     "ContextExtract",
     "SummarizeDiff",
+    "CausalAnalyze",
     "Bash",
     "ToolSearch",
     "ToolsAvailable",
@@ -847,6 +874,7 @@ function setupToolRegistry(mcpTools: McpToolSchema[] = []) {
       category = "filesystem";
     else if (["ExtractSymbols", "SummarizeFile", "ContextExtract", "SummarizeDiff"].includes(name))
       category = "compression";
+    else if (name === "CausalAnalyze") category = "analysis";
     else if (name === "Bash") category = "terminal";
     else if (name === "Inspect") category = "introspection";
     else if (name.startsWith("LSP_")) category = "navigation";
@@ -984,6 +1012,7 @@ export async function runAgentMode(
     "SummarizeFile",
     "ContextExtract",
     "SummarizeDiff",
+    "CausalAnalyze",
     "Bash",
     "WebSearch",
     ...allTools.map((t) => t.function.name),
@@ -1017,11 +1046,13 @@ Use tools to answer requests:
 - Single-Shot Introspection:
   - Inspect: Instantly introspect the environment in 1 call instead of running multiple commands!
     • inspect("project"): Returns frameworks, runtime, package manager, test runner, linters, and git branch in one shot.
+    • inspect("hardware"): OS, CPU, dedicated GPU, available VRAM, RAM, and recommended Ollama model.
     • inspect("file", path): Line count, size, type, and preview.
     • inspect("directory", path): Subdirectory count, file counts, and extension breakdown.
-    • inspect("environment"): OS, CPU, memory, and tools in PATH (bun, node, git, python, etc.).
     • inspect("process"): PID, memory usage (RSS/heap), uptime, and architecture.
     • inspect("config"): Active model, permission policies, hooks, and skills.
+- Autonomous Root-Cause & Causal Analysis:
+  - CausalAnalyze: Constructs multi-step cause ➔ effect failure chains (e.g. slow DB ➔ pool saturation ➔ timeouts ➔ retry storm ➔ cascade failure) with actionable mitigations for complex bugs or performance degradations.
 - Context Compression & Low-VRAM Efficiency:
   - ExtractSymbols: Extract all function signatures, classes, interfaces, and types from a file without loading full bodies (95% token savings!).
   - SummarizeFile: Get compressed structural overview, dependencies, and outline of large files.
@@ -1478,19 +1509,21 @@ Use tools to answer requests:
                                     ? `🎯 Context Window: ${filePath} (around "${args.query ?? ""}")`
                                     : toolName === "SummarizeDiff"
                                       ? `📊 Summarizing Diff: ${args.file_path ?? "all"}`
-                                      : toolName === "WebSearch"
-                                        ? `🌐 Searching: "${args.query ?? ""}"`
-                                      : toolName === "LSP_Definition"
-                                        ? `🔍 LSP Definition: ${args.symbol ?? filePath}`
-                                        : toolName === "LSP_References"
-                                          ? `🔎 LSP References: ${args.symbol ?? filePath}`
-                                          : toolName === "LSP_DocumentSymbols"
-                                            ? `📑 LSP Symbols: ${filePath}`
-                                            : toolName === "LSP_Hover"
-                                              ? `ℹ️ LSP Hover: ${args.symbol ?? filePath}`
-                                              : isMcp && mcpMatch
-                                                ? `🔌 MCP: ${mcpMatch.localName}`
-                                                : `⚡ Running: ${args.command ?? ""}`;
+                                      : toolName === "CausalAnalyze"
+                                        ? `🔬 Causal Analysis: "${args.query ?? ""}"`
+                                        : toolName === "WebSearch"
+                                          ? `🌐 Searching: "${args.query ?? ""}"`
+                                        : toolName === "LSP_Definition"
+                                          ? `🔍 LSP Definition: ${args.symbol ?? filePath}`
+                                          : toolName === "LSP_References"
+                                            ? `🔎 LSP References: ${args.symbol ?? filePath}`
+                                            : toolName === "LSP_DocumentSymbols"
+                                              ? `📑 LSP Symbols: ${filePath}`
+                                              : toolName === "LSP_Hover"
+                                                ? `ℹ️ LSP Hover: ${args.symbol ?? filePath}`
+                                                : isMcp && mcpMatch
+                                                  ? `🔌 MCP: ${mcpMatch.localName}`
+                                                  : `⚡ Running: ${args.command ?? ""}`;
 
         // Target resource for permission evaluation
         const target =
@@ -1518,11 +1551,13 @@ Use tools to answer requests:
                               ? filePath
                               : toolName === "SummarizeDiff"
                                 ? String(args.file_path ?? "diff")
-                                : toolName.startsWith("LSP_")
-                                  ? String(args.symbol ?? filePath)
-                                  : isMcp && mcpMatch
-                                    ? mcpMatch.localName
-                                    : filePath;
+                                : toolName === "CausalAnalyze"
+                                  ? String(args.query ?? "causal")
+                                  : toolName.startsWith("LSP_")
+                                    ? String(args.symbol ?? filePath)
+                                    : isMcp && mcpMatch
+                                      ? mcpMatch.localName
+                                      : filePath;
 
         // Evaluate permissions
         const { action, rule } = evaluatePermission(
@@ -1727,6 +1762,10 @@ Use tools to answer requests:
         } else if (toolName === "SummarizeDiff") {
           result = summarizeDiff(args.file_path);
           if (!result.startsWith("Error:")) actionLog.push(`SummarizeDiff`);
+        } else if (toolName === "CausalAnalyze") {
+          result = executeCausalAnalyze(String(args.query ?? ""), args.context);
+          if (!result.startsWith("Error:"))
+            actionLog.push(`CausalAnalyze: ${args.query}`);
         } else if (toolName === "Bash") {
           let command = args.command ?? "";
           if (typeof command === "object" && command !== null) {
