@@ -72,7 +72,21 @@
   - **Dwell Time & Transition Tracing**: Tracks exact dwell times per state for deep performance profiling.
   - **REPL Slash Command**: Type `/state` or `/lifecycle` in the terminal to inspect the active state and lifecycle transition timeline.
 
-### 🗜️ 10. Context Compression & Low-VRAM Summarization Engine
+### 🧠 10. Autonomous Evaluator & Self-Improvement Engine (`app/evaluators.ts`)
+- Independent scoring organ that judges output quality and provides actionable critique:
+  ```text
+  Coder ➔ Evaluator ➔ Score (e.g. 72/100) ➔ Verdict (ACCEPT / RETRY) ➔ Self-Improvement
+  ```
+- **Evaluation Criteria**:
+  - **`CodeEvaluator`** (weight 0.25): Detects unexecuted tool JSON leaks, unclosed code fences, and empty answers.
+  - **`SecurityEvaluator`** (weight 0.25): Inspects for exposed API keys (`ghp_`, `sk-`), tokens, and destructive shell commands (`rm -rf`).
+  - **`TaskEvaluator`** (weight 0.30): Validates prompt intent, file modifications, and requested item counts.
+  - **`StyleEvaluator`** (weight 0.20): Strips leftover `<think>` tags and conversational fluff.
+- **Model Tool & Slash Command**:
+  - **Tool**: `EvaluateOutput(output)` for autonomous LLM reflection.
+  - **Slash Command**: `/eval` or `/judge` in the REPL terminal to score the latest assistant response.
+
+### 🗜️ 11. Context Compression & Low-VRAM Summarization Engine
 - Tailored for low-memory local models (3B / 7B / 8B) and tight 4GB VRAM limits so the model never overflows context or chokes on massive 10,000-line files:
   - **`extract_symbols(filePath)`**: Extracts all function signatures, classes, interfaces, and types from a file without keeping the internal bodies (up to **95% token savings**).
   - **`summarize_file(filePath)`**: Generates a high-level compressed skeleton, dependencies, and structural outline.

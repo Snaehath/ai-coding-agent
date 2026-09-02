@@ -30,6 +30,7 @@ import { renderModelBanner } from "./banners.ts";
 import { renderEntropyReport } from "./entropy.ts";
 import { middlewarePipeline } from "./middleware.ts";
 import { stateMachine } from "./state-machine.ts";
+import { evaluatorEngine } from "./evaluators.ts";
 
 // ANSI terminal colors
 export const colors = {
@@ -211,6 +212,7 @@ export async function runReplMode(options: {
               `\n  ${colors.boldYellow("/hooks")}            List active lifecycle hooks` +
               `\n  ${colors.boldYellow("/middleware")}       List active request/response interceptors` +
               `\n  ${colors.boldYellow("/state")}            View agent lifecycle state machine & history` +
+              `\n  ${colors.boldYellow("/eval")} | ${colors.boldYellow("/judge")}   Evaluate & score latest response quality` +
               `\n  ${colors.boldYellow("/entropy")} | ${colors.boldYellow("/gc")}   Scan for dead code, unused deps & project entropy` +
               `\n  ${colors.boldYellow("/stats")}            View real-time agent telemetry & metrics` +
               `\n  ${colors.boldYellow("/clear")} | ${colors.boldYellow("/new")}     Start a fresh session` +
@@ -479,6 +481,25 @@ export async function runReplMode(options: {
         case "/state":
         case "/lifecycle": {
           console.log("\n" + stateMachine.renderStateReport() + "\n");
+          break;
+        }
+
+        case "/eval":
+        case "/judge": {
+          const lastAssistantMsg = [...messages].reverse().find((m) => m.role === "assistant");
+          const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
+          if (!lastAssistantMsg) {
+            console.log(colors.yellow("\n⚠️ No assistant response available to evaluate yet.\n"));
+            break;
+          }
+          const promptText = typeof lastUserMsg?.content === "string" ? lastUserMsg.content : "User request";
+          const outputText = typeof lastAssistantMsg.content === "string" ? lastAssistantMsg.content : "";
+          const evalRes = await evaluatorEngine.evaluate({
+            prompt: promptText,
+            output: outputText,
+            messages,
+          });
+          console.log("\n" + evaluatorEngine.formatEvaluationReport(evalRes) + "\n");
           break;
         }
 
