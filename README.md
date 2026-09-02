@@ -31,15 +31,24 @@
   - Formats **headers**, **bold text**, **bullet lists**, **numbered steps**, **blockquotes**, and **tables**.
   - Renders **syntax-highlighted code blocks** inside framed ASCII boxes (`┌── typescript ──┐`).
 
-### 🗂️ 5. Specialized Filesystem Intelligence Tools
+### 🔬 5. Single-Shot Generalized Introspection (`Inspect`)
+- Single-shot environment and codebase discovery primitive so the agent doesn't waste 15 tool calls exploring:
+  - **`inspect("project")`**: Returns framework, runtime, package manager, tests, linters, databases, key scripts, and git branch in 1 call.
+  - **`inspect("environment")`**: OS, CPU cores, system RAM, and available CLI tools in PATH (`bun`, `node`, `git`, `python`, `ollama`, `cargo`, etc.).
+  - **`inspect("process")`**: Process PID, memory usage (RSS/heap), uptime, and platform architecture.
+  - **`inspect("file", path)`**: Line count, byte size, format, and preview.
+  - **`inspect("directory", path)`**: Subdirectory count, file counts, and extension breakdown.
+  - **`inspect("config")`**: Active models, security permission rules, and registered skills.
+
+### 🗂️ 6. Specialized Filesystem Intelligence Tools
 - Native, token-efficient tools so the LLM doesn't rely on raw Bash commands for every inspection:
+  - **`Edit`**: First-class structural code modification (`replace`, `insert_after`, `insert_before`, `delete`, `append`, `prepend`) with AST syntax protection.
   - **`Tree`**: Structured, depth-limited ASCII directory hierarchy (e.g. `tree("src/", 2)`).
   - **`Find`**: Instant filename & substring finder (e.g. `find("package.json")`).
   - **`Glob`**: Fast glob pattern matching across projects (e.g. `glob("src/**/*.ts")`).
   - **`Grep`**: Content regex/keyword search with exact line numbers (e.g. `grep("TODO", "src/")`).
-  - **`Edit`**: Precision in-place string replacement (`old_string` -> `new_string`) without rewriting whole files.
 
-### 🔍 6. Language Server Protocol (LSP) Navigation
+### 🔍 7. Language Server Protocol (LSP) Navigation
 - Direct integration with local language servers (`typescript-language-server`, `pyright`, `gopls`, `rust-analyzer`, `clangd`):
   - `LSP_Definition`: Go to definition across files.
   - `LSP_References`: Find all symbol usages in the codebase.

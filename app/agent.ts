@@ -34,6 +34,7 @@ import {
   executeTree,
   executeEdit,
 } from "./filesystem-tools.ts";
+import { executeInspect } from "./inspect.ts";
 
 // Constants
 const PLACEHOLDER_RE =
@@ -130,6 +131,12 @@ export function extractEmbeddedToolCall(
   knownTools: Set<string> = new Set([
     "Read",
     "Write",
+    "Edit",
+    "Glob",
+    "Grep",
+    "Find",
+    "Tree",
+    "Inspect",
     "Bash",
     "WebSearch",
     "LSP_Definition",
@@ -499,6 +506,38 @@ export const BUILTIN_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "Inspect",
+      description:
+        "Single-shot generalized introspection primitive. Quickly inspects project tech stack (frameworks, runtime, package manager, tests, linters, git), file metadata, directory summaries, process resources, system environment, or active agent configuration in one call.",
+      parameters: {
+        type: "object",
+        required: ["target"],
+        properties: {
+          target: {
+            type: "string",
+            enum: [
+              "project",
+              "file",
+              "directory",
+              "process",
+              "environment",
+              "config",
+            ],
+            description:
+              "The introspection target: 'project' (tech stack, framework, runtime, tests, linters, git), 'file' (size, lines, format), 'directory' (file counts, extensions), 'process' (PID, memory, uptime), 'environment' (OS, tools in PATH), or 'config' (active models, rules).",
+          },
+          path: {
+            type: "string",
+            description:
+              "Optional file or directory path to inspect (for 'project', 'file', or 'directory'). Defaults to current project directory.",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "Bash",
       description: "Execute a shell command and return its output.",
       parameters: {
@@ -748,6 +787,7 @@ export async function runAgentMode(
     "Grep",
     "Find",
     "Tree",
+    "Inspect",
     "Bash",
     "WebSearch",
     ...allTools.map((t) => t.function.name),
@@ -778,10 +818,18 @@ export async function runAgentMode(
       role: "system",
       content: `You are ${agentName}, an autonomous coding assistant.
 Use tools to answer requests:
+- Single-Shot Introspection:
+  - Inspect: Instantly introspect the environment in 1 call instead of running multiple commands!
+    • inspect("project"): Returns frameworks, runtime, package manager, test runner, linters, and git branch in one shot.
+    • inspect("file", path): Line count, size, type, and preview.
+    • inspect("directory", path): Subdirectory count, file counts, and extension breakdown.
+    • inspect("environment"): OS, CPU, memory, and tools in PATH (bun, node, git, python, etc.).
+    • inspect("process"): PID, memory usage (RSS/heap), uptime, and architecture.
+    • inspect("config"): Active model, permission policies, hooks, and skills.
 - File Operations:
   - Read: Read full file contents.
   - Write: Create new files or overwrite complete files.
-  - Edit: Modify existing files using exact old_string to new_string replacements (faster and safer than rewriting).
+  - Edit: Modify existing files using structural operations (replace, insert_after, insert_before, delete, append, prepend) with automatic syntax integrity checks.
 - Filesystem & Search Intelligence:
   - Tree: Explore directory structure and hierarchy (e.g. tree("app/", 2)).
   - Find: Locate files or directories by name (e.g. find("package.json")).
@@ -1174,8 +1222,10 @@ Use tools to answer requests:
                       ? `📂 Find: "${args.name ?? ""}"`
                       : toolName === "Tree"
                         ? `🌲 Tree: ${args.path ?? "."}`
-                        : toolName === "WebSearch"
-                          ? `🌐 Searching: "${args.query ?? ""}"`
+                        : toolName === "Inspect"
+                          ? `🔬 Inspecting: ${args.target ?? "project"}`
+                          : toolName === "WebSearch"
+                            ? `🌐 Searching: "${args.query ?? ""}"`
                           : toolName === "LSP_Definition"
                             ? `🔍 LSP Definition: ${args.symbol ?? filePath}`
                             : toolName === "LSP_References"
@@ -1202,11 +1252,13 @@ Use tools to answer requests:
                     ? String(args.name ?? "")
                     : toolName === "Tree"
                       ? String(args.path ?? ".")
-                      : toolName.startsWith("LSP_")
-                        ? String(args.symbol ?? filePath)
-                        : isMcp && mcpMatch
-                          ? mcpMatch.localName
-                          : filePath;
+                      : toolName === "Inspect"
+                        ? String(args.target ?? "project")
+                        : toolName.startsWith("LSP_")
+                          ? String(args.symbol ?? filePath)
+                          : isMcp && mcpMatch
+                            ? mcpMatch.localName
+                            : filePath;
 
         // Evaluate permissions
         const { action, rule } = evaluatePermission(
@@ -1353,6 +1405,10 @@ Use tools to answer requests:
             Number(args.depth ?? 3),
           );
           if (!result.startsWith("Error:")) actionLog.push(`Tree: ${args.path ?? "."}`);
+        } else if (toolName === "Inspect") {
+          result = executeInspect(args);
+          if (!result.startsWith("Error:"))
+            actionLog.push(`Inspect ${args.target || "project"}`);
         } else if (toolName === "Bash") {
           let command = args.command ?? "";
           if (typeof command === "object" && command !== null) {

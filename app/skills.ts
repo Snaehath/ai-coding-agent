@@ -112,7 +112,7 @@ export function matchSkill(prompt: string, skills: Skill[]): Skill | null {
     if (lowerPrompt.includes(lowerName)) return skill;
 
     // Check specific intent keywords based on skill name
-    if (lowerName === "code-reviewer" && /\b(review|audit|inspect|critique|check code)\b/i.test(lowerPrompt)) {
+    if (lowerName === "code-reviewer" && /\b(review|audit|critique|code review)\b/i.test(lowerPrompt)) {
       return skill;
     }
     if (lowerName === "code-translator" && /\b(translate|convert|port|rewrite in)\b/i.test(lowerPrompt)) {
