@@ -40,7 +40,15 @@
   - **`inspect("directory", path)`**: Subdirectory count, file counts, and extension breakdown.
   - **`inspect("config")`**: Active models, security permission rules, and registered skills.
 
-### 🧰 6. On-Demand Tool Discovery & Progressive Context Loading
+### 🗜️ 6. Context Compression & Low-VRAM Summarization Engine
+- Tailored for low-memory local models (3B / 7B / 8B) and tight 4GB VRAM limits so the model never overflows context or chokes on massive 10,000-line files:
+  - **`extract_symbols(filePath)`**: Extracts all function signatures, classes, interfaces, and types from a file without keeping the internal bodies (up to **95% token savings**).
+  - **`summarize_file(filePath)`**: Generates a high-level compressed skeleton, dependencies, and structural outline.
+  - **`context_extract(filePath, query, radius)`**: Slices a focused window around a target function, keyword, or line number with custom radius (e.g. 15 lines).
+  - **`summarize_diff(filePath)`**: Returns compact statistics and functional summaries of uncommitted git diffs.
+  - **`compress_history(messages)`**: Intelligently digests older turns into a structured summary when approaching context limits.
+
+### 🧰 7. On-Demand Tool Discovery & Progressive Context Loading
 - Instead of dumping 50+ tool schemas into every prompt payload (wasting thousands of context tokens):
   - **Lean Core Toolset**: Initially activates only high-leverage core primitives (`Inspect`, `Read`, `Write`, `Edit`, `Tree`, `Find`, `Grep`, `Bash`, `ToolSearch`, `ToolsAvailable`).
   - **`ToolsAvailable()`**: Lists available catalogs across categories (`filesystem`, `navigation`, `web`, `database`, `mcp`, `specialized`) without loading their JSON schemas into prompt context.

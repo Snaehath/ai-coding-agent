@@ -41,6 +41,13 @@ import {
   executeToolSearch,
   executeToolsAvailable,
 } from "./tool-discovery.ts";
+import {
+  extractSymbols,
+  summarizeFile,
+  contextExtract,
+  summarizeDiff,
+  compressHistory,
+} from "./context-engine.ts";
 
 // Constants
 const PLACEHOLDER_RE =
@@ -145,6 +152,10 @@ export function extractEmbeddedToolCall(
     "Inspect",
     "ToolSearch",
     "ToolsAvailable",
+    "ExtractSymbols",
+    "SummarizeFile",
+    "ContextExtract",
+    "SummarizeDiff",
     "Bash",
     "WebSearch",
     "LSP_Definition",
@@ -728,6 +739,85 @@ export const BUILTIN_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "ExtractSymbols",
+      description:
+        "Extract all function signatures, classes, interfaces, and type declarations from a file without loading full internal implementation bodies (up to 95% token savings).",
+      parameters: {
+        type: "object",
+        required: ["file_path"],
+        properties: {
+          file_path: {
+            type: "string",
+            description: "Path to the code file to extract outline from.",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "SummarizeFile",
+      description:
+        "Generate a compressed high-level summary of a large file, including dependencies, structural outline, and line counts, to avoid reading thousands of lines.",
+      parameters: {
+        type: "object",
+        required: ["file_path"],
+        properties: {
+          file_path: {
+            type: "string",
+            description: "Path to the file to summarize.",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "ContextExtract",
+      description:
+        "Extract a focused window of lines around a specific function, line number, or keyword with a custom context radius, avoiding full file reads.",
+      parameters: {
+        type: "object",
+        required: ["file_path", "query"],
+        properties: {
+          file_path: {
+            type: "string",
+            description: "Path to the file.",
+          },
+          query: {
+            type: "string",
+            description: "Function name, keyword, or line number to center the context slice around.",
+          },
+          radius: {
+            type: "number",
+            description: "Number of lines of leading and trailing context (default: 15).",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "SummarizeDiff",
+      description:
+        "Generate a concise statistical and functional summary of uncommitted git changes or diffs.",
+      parameters: {
+        type: "object",
+        properties: {
+          file_path: {
+            type: "string",
+            description: "Optional specific file to check git diff for.",
+          },
+        },
+      },
+    },
+  },
 ];
 
 // Initialize tool catalog with core and specialized tools
@@ -740,6 +830,10 @@ function setupToolRegistry(mcpTools: McpToolSchema[] = []) {
     "Tree",
     "Find",
     "Grep",
+    "ExtractSymbols",
+    "SummarizeFile",
+    "ContextExtract",
+    "SummarizeDiff",
     "Bash",
     "ToolSearch",
     "ToolsAvailable",
@@ -750,6 +844,8 @@ function setupToolRegistry(mcpTools: McpToolSchema[] = []) {
     let category: any = "specialized";
     if (["Read", "Write", "Edit", "Tree", "Find", "Grep", "Glob"].includes(name))
       category = "filesystem";
+    else if (["ExtractSymbols", "SummarizeFile", "ContextExtract", "SummarizeDiff"].includes(name))
+      category = "compression";
     else if (name === "Bash") category = "terminal";
     else if (name === "Inspect") category = "introspection";
     else if (name.startsWith("LSP_")) category = "navigation";
@@ -883,6 +979,10 @@ export async function runAgentMode(
     "Inspect",
     "ToolSearch",
     "ToolsAvailable",
+    "ExtractSymbols",
+    "SummarizeFile",
+    "ContextExtract",
+    "SummarizeDiff",
     "Bash",
     "WebSearch",
     ...allTools.map((t) => t.function.name),
@@ -921,6 +1021,11 @@ Use tools to answer requests:
     • inspect("environment"): OS, CPU, memory, and tools in PATH (bun, node, git, python, etc.).
     • inspect("process"): PID, memory usage (RSS/heap), uptime, and architecture.
     • inspect("config"): Active model, permission policies, hooks, and skills.
+- Context Compression & Low-VRAM Efficiency:
+  - ExtractSymbols: Extract all function signatures, classes, interfaces, and types from a file without loading full bodies (95% token savings!).
+  - SummarizeFile: Get compressed structural overview, dependencies, and outline of large files.
+  - ContextExtract: Extract a focused window of lines around a specific function/keyword with custom radius instead of reading full 1,000+ line files.
+  - SummarizeDiff: Concise statistics and functional changes in uncommitted git diffs.
 - On-Demand Tool Discovery:
   - ToolSearch: When you need specialized capabilities (web search, LSP code navigation, database tools, MCP integrations), search for and dynamically activate them (e.g. ToolSearch({ query: "web search" }) or ToolSearch({ query: "lsp" })).
   - ToolsAvailable: List available tool categories without consuming context.
@@ -1022,9 +1127,22 @@ Use tools to answer requests:
         timestamp: new Date().toISOString(),
       });
 
+      // Intelligent low-VRAM history compaction
+      const { messages: compactedMessages, compacted: didCompact } =
+        compressHistory(messages, modelStats.configuredContextLength || 8000);
+      if (didCompact) {
+        eventBus.emit({
+          type: "context.compacted",
+          sessionId,
+          beforeTokens: estimateMessagesTokens(messages),
+          afterTokens: estimateMessagesTokens(compactedMessages),
+          timestamp: new Date().toISOString(),
+        });
+      }
+
       const requestPayload: any = {
         model,
-        messages: trimContextMessages(messages),
+        messages: trimContextMessages(compactedMessages),
         tools: activeSkill?.tools ? allTools : toolRegistry.getActiveSchemas(),
         stream: true,
       };
@@ -1351,19 +1469,27 @@ Use tools to answer requests:
                             ? `🔎 Searching Tools: "${args.query ?? ""}"`
                             : toolName === "ToolsAvailable"
                               ? `🧰 Available Tools`
-                              : toolName === "WebSearch"
-                                ? `🌐 Searching: "${args.query ?? ""}"`
-                              : toolName === "LSP_Definition"
-                                ? `🔍 LSP Definition: ${args.symbol ?? filePath}`
-                                : toolName === "LSP_References"
-                                  ? `🔎 LSP References: ${args.symbol ?? filePath}`
-                                  : toolName === "LSP_DocumentSymbols"
-                                    ? `📑 LSP Symbols: ${filePath}`
-                                    : toolName === "LSP_Hover"
-                                      ? `ℹ️ LSP Hover: ${args.symbol ?? filePath}`
-                                      : isMcp && mcpMatch
-                                        ? `🔌 MCP: ${mcpMatch.localName}`
-                                        : `⚡ Running: ${args.command ?? ""}`;
+                              : toolName === "ExtractSymbols"
+                                ? `📑 Extracting Symbols: ${filePath}`
+                                : toolName === "SummarizeFile"
+                                  ? `🗜️ Summarizing File: ${filePath}`
+                                  : toolName === "ContextExtract"
+                                    ? `🎯 Context Window: ${filePath} (around "${args.query ?? ""}")`
+                                    : toolName === "SummarizeDiff"
+                                      ? `📊 Summarizing Diff: ${args.file_path ?? "all"}`
+                                      : toolName === "WebSearch"
+                                        ? `🌐 Searching: "${args.query ?? ""}"`
+                                      : toolName === "LSP_Definition"
+                                        ? `🔍 LSP Definition: ${args.symbol ?? filePath}`
+                                        : toolName === "LSP_References"
+                                          ? `🔎 LSP References: ${args.symbol ?? filePath}`
+                                          : toolName === "LSP_DocumentSymbols"
+                                            ? `📑 LSP Symbols: ${filePath}`
+                                            : toolName === "LSP_Hover"
+                                              ? `ℹ️ LSP Hover: ${args.symbol ?? filePath}`
+                                              : isMcp && mcpMatch
+                                                ? `🔌 MCP: ${mcpMatch.localName}`
+                                                : `⚡ Running: ${args.command ?? ""}`;
 
         // Target resource for permission evaluation
         const target =
@@ -1385,11 +1511,17 @@ Use tools to answer requests:
                           ? String(args.query ?? "")
                           : toolName === "ToolsAvailable"
                             ? String(args.category ?? "all")
-                            : toolName.startsWith("LSP_")
-                              ? String(args.symbol ?? filePath)
-                              : isMcp && mcpMatch
-                                ? mcpMatch.localName
-                                : filePath;
+                            : toolName === "ExtractSymbols" ||
+                                toolName === "SummarizeFile" ||
+                                toolName === "ContextExtract"
+                              ? filePath
+                              : toolName === "SummarizeDiff"
+                                ? String(args.file_path ?? "diff")
+                                : toolName.startsWith("LSP_")
+                                  ? String(args.symbol ?? filePath)
+                                  : isMcp && mcpMatch
+                                    ? mcpMatch.localName
+                                    : filePath;
 
         // Evaluate permissions
         const { action, rule } = evaluatePermission(
@@ -1575,6 +1707,25 @@ Use tools to answer requests:
         } else if (toolName === "ToolsAvailable") {
           result = executeToolsAvailable(args.category);
           if (!result.startsWith("Error:")) actionLog.push(`ToolsAvailable`);
+        } else if (toolName === "ExtractSymbols") {
+          result = extractSymbols(filePath);
+          if (!result.startsWith("Error:"))
+            actionLog.push(`ExtractSymbols: ${filePath}`);
+        } else if (toolName === "SummarizeFile") {
+          result = summarizeFile(filePath);
+          if (!result.startsWith("Error:"))
+            actionLog.push(`SummarizeFile: ${filePath}`);
+        } else if (toolName === "ContextExtract") {
+          result = contextExtract(
+            filePath,
+            args.query,
+            Number(args.radius ?? 15),
+          );
+          if (!result.startsWith("Error:"))
+            actionLog.push(`ContextExtract: ${filePath}`);
+        } else if (toolName === "SummarizeDiff") {
+          result = summarizeDiff(args.file_path);
+          if (!result.startsWith("Error:")) actionLog.push(`SummarizeDiff`);
         } else if (toolName === "Bash") {
           let command = args.command ?? "";
           if (typeof command === "object" && command !== null) {
