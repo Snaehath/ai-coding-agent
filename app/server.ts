@@ -24,6 +24,8 @@ export type JsonRpcResponse = {
   error?: { code: number; message: string; data?: any };
 };
 
+import { eventBus, type AgentEvent } from "./events.ts";
+
 // Headless JSON-RPC server mode over stdio
 export async function runServerMode() {
   let currentSessionFile = createNewSessionPath();
@@ -36,6 +38,16 @@ export async function runServerMode() {
 
   const send = (obj: JsonRpcResponse) =>
     process.stdout.write(JSON.stringify(obj) + "\n");
+
+  const sendNotification = (method: string, params: any) =>
+    process.stdout.write(
+      JSON.stringify({ jsonrpc: "2.0", method, params }) + "\n",
+    );
+
+  // Subscribe to all AgentEvents and stream to IDE / Web UI clients
+  const unsubscribe = eventBus.onAny((event: AgentEvent) => {
+    sendNotification("agent/event", event);
+  });
 
   for await (const line of rl) {
     if (!line.trim()) continue;

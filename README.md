@@ -48,7 +48,17 @@
   - **`Glob`**: Fast glob pattern matching across projects (e.g. `glob("src/**/*.ts")`).
   - **`Grep`**: Content regex/keyword search with exact line numbers (e.g. `grep("TODO", "src/")`).
 
-### 🔍 7. Language Server Protocol (LSP) Navigation
+### ⚡ 8. Unified AgentEvent Stream Architecture (`AgentEventBus`)
+- Strongly-typed reactive pub/sub event bus (`app/events.ts`) unifying all internal communication:
+  - **`session.started` / `session.ended`**: Session initialization and overall lifecycle milestones.
+  - **`model.started` / `model.completed`**: Model generation timings, token counts, and speed metrics.
+  - **`token.streamed`**: Real-time token streaming chunks (content and reasoning/thinking tokens).
+  - **`permission.requested` / `permission.resolved`**: Real-time permission gate state changes.
+  - **`tool.started` / `tool.completed`**: Tool invocations, durations, errors, and sanitized outputs.
+  - **`file.changed`**: Granular notifications when files are created (`Write`) or edited (`Edit`).
+- **Unified Subscribers**: TUI REPL, JSON-RPC Server (VS Code / Web UI), Telemetry loggers, and Plugins all subscribe to the exact same stream with zero coupling!
+
+### 🔍 9. Language Server Protocol (LSP) Navigation
 - Direct integration with local language servers (`typescript-language-server`, `pyright`, `gopls`, `rust-analyzer`, `clangd`):
   - `LSP_Definition`: Go to definition across files.
   - `LSP_References`: Find all symbol usages in the codebase.

@@ -35,6 +35,7 @@ import {
   executeEdit,
 } from "./filesystem-tools.ts";
 import { executeInspect } from "./inspect.ts";
+import { eventBus } from "./events.ts";
 
 // Constants
 const PLACEHOLDER_RE =
@@ -895,10 +896,19 @@ Use tools to answer requests:
   const runtimePermCache = new Map<string, PermissionAction>();
   const hooksConfig = loadHooksConfig();
   const loopDetector = createToolLoopDetector(3);
+  const sessionStartTime = performance.now();
   const sessionId = sessionFilePath
     ? path.basename(sessionFilePath, ".jsonl")
     : "session_" + Date.now().toString(36);
   const modelStats = await fetchModelContextStats(model);
+
+  // Emit session.started event
+  eventBus.emit({
+    type: "session.started",
+    sessionId,
+    model,
+    timestamp: new Date().toISOString(),
+  });
 
   try {
     while (turns++ < MAX_TURNS) {
@@ -908,6 +918,18 @@ Use tools to answer requests:
       let turnErrors = 0;
 
       const thinkingEffort = process.env.THINKING_EFFORT?.toLowerCase().trim();
+
+      // Emit model.started event
+      eventBus.emit({
+        type: "model.started",
+        sessionId,
+        turn: turns,
+        model,
+        prompt: typeof prompt === "string" ? prompt : JSON.stringify(prompt),
+        thinkingEffort,
+        timestamp: new Date().toISOString(),
+      });
+
       const requestPayload: any = {
         model,
         messages: trimContextMessages(messages),
@@ -1064,6 +1086,15 @@ Use tools to answer requests:
           }
 
           fullContent += delta.content;
+          if (text) {
+            eventBus.emit({
+              type: "token.streamed",
+              sessionId,
+              token: text,
+              isReasoning: inReasoningField || inThinkTag,
+              timestamp: new Date().toISOString(),
+            });
+          }
           if (onToken && text) {
             const trimmed = fullContent.trimStart();
             const isJsonToolCall =
@@ -1269,6 +1300,15 @@ Use tools to answer requests:
         );
         let result: string | null = null;
 
+        eventBus.emit({
+          type: "permission.requested",
+          sessionId,
+          toolName,
+          target,
+          action,
+          timestamp: new Date().toISOString(),
+        });
+
         if (action === "deny") {
           process.stdout.write(
             `  ${colors.dim("↳")} ${colors.red(`[⛔ Denied by policy]`)} ${toolName}: ${target} (${rule?.description ?? "Restricted"})\n`,
@@ -1288,6 +1328,15 @@ Use tools to answer requests:
             result = `Error: User denied permission to execute ${toolName} on "${target}".`;
           }
         }
+
+        eventBus.emit({
+          type: "permission.resolved",
+          sessionId,
+          toolName,
+          target,
+          allowed: !result,
+          timestamp: new Date().toISOString(),
+        });
 
         // Security Guardrail 1: Sensitive path protection
         if (
@@ -1331,6 +1380,16 @@ Use tools to answer requests:
 
         // Notify tool call if allowed
         if (!result) {
+          eventBus.emit({
+            type: "tool.started",
+            sessionId,
+            toolName,
+            args,
+            summary,
+            target,
+            timestamp: new Date().toISOString(),
+          });
+
           if (notifyTool) {
             notifyTool(toolName, summary);
           } else {
@@ -1508,14 +1567,39 @@ Use tools to answer requests:
           result = `Unknown tool: ${toolName}`;
         }
 
-        turnToolTimeMs += performance.now() - toolExecStart;
-        if (
+        const toolExecDuration = Math.round(performance.now() - toolExecStart);
+        turnToolTimeMs += toolExecDuration;
+        const isError = Boolean(
           result &&
-          (result.startsWith("Error:") ||
-            result.startsWith("Error reading") ||
-            result.startsWith("Error writing"))
-        ) {
+            (result.startsWith("Error:") ||
+              result.startsWith("Error reading") ||
+              result.startsWith("Error writing")),
+        );
+        if (isError) {
           turnErrors++;
+        }
+
+        // Emit tool.completed event
+        eventBus.emit({
+          type: "tool.completed",
+          sessionId,
+          toolName,
+          result: sanitizeSecrets(result ?? ""),
+          executionTimeMs: toolExecDuration,
+          isError,
+          timestamp: new Date().toISOString(),
+        });
+
+        // Emit file.changed event if file modified
+        if (!isError && (toolName === "Write" || toolName === "Edit")) {
+          eventBus.emit({
+            type: "file.changed",
+            sessionId,
+            filePath,
+            action: toolName === "Write" ? "created" : "edited",
+            operation: args.operation || "replace",
+            timestamp: new Date().toISOString(),
+          });
         }
 
         // Trigger post_tool_call lifecycle hooks
@@ -1553,6 +1637,21 @@ Use tools to answer requests:
       const tokens_per_second =
         genSec > 0 ? Math.round((output_tokens / genSec) * 10) / 10 : 0;
 
+      // Emit model.completed event
+      eventBus.emit({
+        type: "model.completed",
+        sessionId,
+        turn: turns,
+        model,
+        ttftMs: ttft_ms,
+        generationTimeMs: generation_time_ms,
+        tokensPerSecond: tokens_per_second,
+        inputTokens: input_tokens,
+        outputTokens: output_tokens,
+        contextTokens: context_tokens,
+        timestamp: new Date().toISOString(),
+      });
+
       recordTurnTelemetry({
         session_id: sessionId,
         turn: turns,
@@ -1579,6 +1678,20 @@ Use tools to answer requests:
         : "⚠️ Turn limit reached without a final answer.";
     return limitMsg;
   } finally {
+    // Emit session.ended event
+    eventBus.emit({
+      type: "session.ended",
+      sessionId,
+      model,
+      totalTurns: turns,
+      durationSec:
+        Math.round(((performance.now() - sessionStartTime) / 1000) * 10) / 10,
+      totalTokens: estimateMessagesTokens(messages),
+      actionsCount: actionLog.length,
+      errorsCount: 0,
+      timestamp: new Date().toISOString(),
+    });
+
     // Trigger on_session_end lifecycle hooks
     await executeHooks(
       "on_session_end",
