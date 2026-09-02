@@ -166,11 +166,7 @@ export async function promptSelectModel(currentModelId: string): Promise<ModelIn
 
   function renderMenu() {
     if (renderedLines > 0) {
-      process.stdout.write(`\x1b[${renderedLines}A\r`);
-      for (let i = 0; i < renderedLines; i++) {
-        process.stdout.write("\x1b[2K\n");
-      }
-      process.stdout.write(`\x1b[${renderedLines}A\r`);
+      process.stdout.write(`\x1b[${renderedLines}A\r\x1b[0J`);
     }
 
     const lines: string[] = [];
@@ -213,9 +209,9 @@ export async function promptSelectModel(currentModelId: string): Promise<ModelIn
     const handleSelect = (idx: number) => {
       cleanup();
       const chosen = models[idx];
-      process.stdout.write(
-        `\n  ✨ Switched to: ${boldCyan(chosen.name)} ${gray(`(${chosen.id})`)}\n\n`,
-      );
+      if (renderedLines > 0) {
+        process.stdout.write(`\x1b[${renderedLines + 3}A\r\x1b[0J`);
+      }
       resolve(chosen);
     };
 
