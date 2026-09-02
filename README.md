@@ -31,24 +31,32 @@
   - Formats **headers**, **bold text**, **bullet lists**, **numbered steps**, **blockquotes**, and **tables**.
   - Renders **syntax-highlighted code blocks** inside framed ASCII boxes (`┌── typescript ──┐`).
 
-### 🔍 5. Language Server Protocol (LSP) Navigation
+### 🗂️ 5. Specialized Filesystem Intelligence Tools
+- Native, token-efficient tools so the LLM doesn't rely on raw Bash commands for every inspection:
+  - **`Tree`**: Structured, depth-limited ASCII directory hierarchy (e.g. `tree("src/", 2)`).
+  - **`Find`**: Instant filename & substring finder (e.g. `find("package.json")`).
+  - **`Glob`**: Fast glob pattern matching across projects (e.g. `glob("src/**/*.ts")`).
+  - **`Grep`**: Content regex/keyword search with exact line numbers (e.g. `grep("TODO", "src/")`).
+  - **`Edit`**: Precision in-place string replacement (`old_string` -> `new_string`) without rewriting whole files.
+
+### 🔍 6. Language Server Protocol (LSP) Navigation
 - Direct integration with local language servers (`typescript-language-server`, `pyright`, `gopls`, `rust-analyzer`, `clangd`):
   - `LSP_Definition`: Go to definition across files.
   - `LSP_References`: Find all symbol usages in the codebase.
   - `LSP_DocumentSymbols`: Inspect file outline and function signatures.
   - `LSP_Hover`: Inspect type signatures and docstrings.
 
-### 🔌 6. Model Context Protocol (MCP) & Web Search
+### 🔌 7. Model Context Protocol (MCP) & Web Search
 - **MCP Integration**: Connects to external tool servers via standard stdio JSON-RPC (`.agents/mcp.json`).
 - **Live Web Search**: Built-in DuckDuckGo search integration for up-to-date documentation and package lookups.
 
-### 🔒 7. Multi-Tier Security Guardrails
+### 🔒 8. Multi-Tier Security Guardrails
 - **Path Traversal Shield**: Blocks access to sensitive SSH keys (`~/.ssh/id_rsa`), AWS credentials, and root OS directories (`C:\Windows`, `/etc/shadow`).
 - **Destructive Command Interception**: Intercepts `rm -rf /`, `del /s /q C:\`, format commands, fork bombs, and system reboots.
 - **Runaway Loop Detection**: Intercepts repetitive tool calls if a model loops 3 times on the same arguments.
 - **Secret Redaction**: Automatically scrubs API keys and private tokens from logs and responses.
 
-### 📦 8. Unified Single-File Session & Telemetry
+### 📦 9. Unified Single-File Session & Telemetry
 - All conversation turns and telemetry metrics (TTFT, generation tokens/sec, context usage) are recorded in a single file per session under `.agents/sessions/<session_id>.jsonl`.
 
 ---

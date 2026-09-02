@@ -27,6 +27,13 @@ import {
   sanitizeSecrets,
   createToolLoopDetector,
 } from "./guardrails.ts";
+import {
+  executeGlob,
+  executeGrep,
+  executeFind,
+  executeTree,
+  executeEdit,
+} from "./filesystem-tools.ts";
 
 // Constants
 const PLACEHOLDER_RE =
@@ -249,32 +256,36 @@ export function extractEmbeddedToolCall(
   return null;
 }
 
-// Clean assistant response
-export function cleanAssistantContent(text: string): string {
-  if (!text) return "";
-  let clean = text.trim();
+// Strip tool call artifacts and tags from content
+export function cleanAssistantContent(raw: string): string {
+  if (!raw) return "";
 
-  // If model wrapped its final response in a JSON object: {"response": "..."} or {"name": "...", "arguments": {"response": "..."}}
+  let clean = raw.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+
+  // If model wrapped its final response in a JSON object: {"response": "..."}
   try {
     const parsed = JSON.parse(clean);
     if (parsed && typeof parsed === "object") {
       const inner = parsed.arguments ?? parsed;
-      const val = inner.response || inner.answer || inner.output || inner.result || inner.message;
+      const val =
+        inner.response ||
+        inner.answer ||
+        inner.output ||
+        inner.result ||
+        inner.message;
       if (val) return String(val);
     }
   } catch {
-    const respMatch = clean.match(/"(?:response|answer|output|result|message)"\s*:\s*"([^"]+)/i);
+    const respMatch = clean.match(
+      /"(?:response|answer|output|result|message)"\s*:\s*"([^"]+)/i,
+    );
     if (respMatch) {
       return respMatch[1];
     }
   }
 
-  // Remove markdown codeblock JSON tool calls
-  clean = clean.replace(/```(?:json)?\s*\{[\s\S]*?"(?:name|function|tool)"[\s\S]*?\}\s*```/gi, "");
-  // Remove inline JSON tool call objects
-  clean = clean.replace(/\{[^{}]*"(?:name|function|tool)"\s*:\s*"[^"]+"[^{}]*\}/g, "");
-  // Remove XML tool tags
-  clean = clean.replace(/<tool_response>[\s\S]*?<\/tool_response>/gi, "");
+  clean = clean.replace(TOOL_CALL_OBJ_RE, "");
+  clean = clean.replace(/```(?:json)?\s*\{[\s\S]*?\}\s*```/g, "");
   clean = clean.replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, "");
   clean = clean.replace(/<[^>]+>/g, "").trim();
 
@@ -327,6 +338,136 @@ export const BUILTIN_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           content: {
             type: "string",
             description: "The full content to write.",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "Edit",
+      description:
+        "Perform exact string replacement inside an existing file. Use this to update, fix, or modify code without rewriting the entire file.",
+      parameters: {
+        type: "object",
+        required: ["file_path", "old_string", "new_string"],
+        properties: {
+          file_path: {
+            type: "string",
+            description: "Path to the file to edit.",
+          },
+          old_string: {
+            type: "string",
+            description:
+              "The exact existing text block to replace (must match exactly).",
+          },
+          new_string: {
+            type: "string",
+            description: "The replacement content.",
+          },
+          replace_all: {
+            type: "boolean",
+            description:
+              "If true, replace all occurrences. Defaults to false.",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "Glob",
+      description:
+        "Find files matching a glob pattern (e.g. 'src/**/*.ts', 'app/*.json', '**/*.tsx'). Fast and token-efficient.",
+      parameters: {
+        type: "object",
+        required: ["pattern"],
+        properties: {
+          pattern: {
+            type: "string",
+            description:
+              "Glob pattern to match files against (e.g. '**/*.ts', 'src/**/*.vue').",
+          },
+          path: {
+            type: "string",
+            description:
+              "Optional root directory to search from. Defaults to project root.",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "Grep",
+      description:
+        "Search file contents for regex or substring matches across the codebase. Returns file paths with matching line numbers and text.",
+      parameters: {
+        type: "object",
+        required: ["query"],
+        properties: {
+          query: {
+            type: "string",
+            description:
+              "Substring or regular expression to search for in file contents.",
+          },
+          path: {
+            type: "string",
+            description:
+              "Optional file or directory path to search within. Defaults to current directory.",
+          },
+          include: {
+            type: "string",
+            description:
+              "Optional glob filter to restrict files (e.g. '*.ts', '*.py').",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "Find",
+      description:
+        "Quickly locate files or directories matching a name or substring across the workspace.",
+      parameters: {
+        type: "object",
+        required: ["name"],
+        properties: {
+          name: {
+            type: "string",
+            description:
+              "Filename or substring to search for (e.g. 'package.json', 'models').",
+          },
+          path: {
+            type: "string",
+            description: "Optional directory to search within.",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "Tree",
+      description:
+        "Generate a structured visual directory tree showing the hierarchy of files and folders up to a maximum depth.",
+      parameters: {
+        type: "object",
+        properties: {
+          path: {
+            type: "string",
+            description:
+              "Optional root directory to generate tree for. Defaults to current workspace.",
+          },
+          depth: {
+            type: "number",
+            description: "Maximum depth level (default: 3).",
           },
         },
       },
@@ -579,6 +720,11 @@ export async function runAgentMode(
   const allToolNames = new Set([
     "Read",
     "Write",
+    "Edit",
+    "Glob",
+    "Grep",
+    "Find",
+    "Tree",
     "Bash",
     "WebSearch",
     ...allTools.map((t) => t.function.name),
@@ -608,11 +754,23 @@ export async function runAgentMode(
     messages.unshift({
       role: "system",
       content: `You are ${agentName}, an autonomous coding assistant.
-Use tools to answer requests (Read, Write, Bash, WebSearch, LSP_Definition, LSP_References, LSP_DocumentSymbols, LSP_Hover).
-- Task Alignment: Stay strictly focused on the user's specific coding task. Do not deviate, execute unrelated system tasks, or attempt unauthorized operations.
-- When navigating code, finding where symbols/functions are defined, or locating usages across the project, use LSP tools (LSP_Definition, LSP_References, LSP_DocumentSymbols, LSP_Hover).
-- When a file path is mentioned, immediately invoke Read — never ask the user to provide file paths or contents.
-- When asked about real-time events, latest library documentation, current packages, or external web queries, use WebSearch to find up-to-date facts.${mcpList}${skillList}${activeSkillPrompt}
+Use tools to answer requests:
+- File Operations:
+  - Read: Read full file contents.
+  - Write: Create new files or overwrite complete files.
+  - Edit: Modify existing files using exact old_string to new_string replacements (faster and safer than rewriting).
+- Filesystem & Search Intelligence:
+  - Tree: Explore directory structure and hierarchy (e.g. tree("app/", 2)).
+  - Find: Locate files or directories by name (e.g. find("package.json")).
+  - Glob: Match files by glob pattern (e.g. glob("src/**/*.ts")).
+  - Grep: Search file contents for keywords, regex, or code occurrences with line numbers (e.g. grep("useEffect", "src/")).
+- Code Navigation:
+  - LSP tools (LSP_Definition, LSP_References, LSP_DocumentSymbols, LSP_Hover): Find symbol definitions, references, signatures, and document outlines.
+- External Knowledge:
+  - WebSearch: Look up up-to-date documentation, external libraries, and real-time facts.
+- Shell:
+  - Bash: Execute build, test, git, or command-line tasks.${mcpList}${skillList}${activeSkillPrompt}
+- Task Alignment: Stay strictly focused on the user's specific coding task. Do not deviate or execute unrelated system tasks.
 - Security & Path Safety: Never attempt to access private keys (.ssh), cloud credentials (.aws), system directories (C:\\Windows, /etc), or execute destructive filesystem commands.
 - Loop Prevention: When a tool returns a result or error, do NOT invoke the exact same tool with identical arguments again. Instead, present that answer or explain the issue in natural language to the user.
 - Never output raw JSON tool calls in your final response.`,
@@ -983,19 +1141,29 @@ Use tools to answer requests (Read, Write, Bash, WebSearch, LSP_Definition, LSP_
             ? `📖 Reading  ${filePath}`
             : toolName === "Write"
               ? `📝 Writing  ${filePath}`
-              : toolName === "WebSearch"
-                ? `🌐 Searching: "${args.query ?? ""}"`
-                : toolName === "LSP_Definition"
-                  ? `🔍 LSP Definition: ${args.symbol ?? filePath}`
-                  : toolName === "LSP_References"
-                    ? `🔎 LSP References: ${args.symbol ?? filePath}`
-                    : toolName === "LSP_DocumentSymbols"
-                      ? `📑 LSP Symbols: ${filePath}`
-                      : toolName === "LSP_Hover"
-                        ? `ℹ️ LSP Hover: ${args.symbol ?? filePath}`
-                        : isMcp && mcpMatch
-                          ? `🔌 MCP: ${mcpMatch.localName}`
-                          : `⚡ Running: ${args.command ?? ""}`;
+              : toolName === "Edit"
+                ? `✏️ Editing  ${filePath}`
+                : toolName === "Glob"
+                  ? `🔎 Glob: "${args.pattern ?? ""}"`
+                  : toolName === "Grep"
+                    ? `🔍 Grep: "${args.query ?? ""}" in ${args.path ?? "."}`
+                    : toolName === "Find"
+                      ? `📂 Find: "${args.name ?? ""}"`
+                      : toolName === "Tree"
+                        ? `🌲 Tree: ${args.path ?? "."}`
+                        : toolName === "WebSearch"
+                          ? `🌐 Searching: "${args.query ?? ""}"`
+                          : toolName === "LSP_Definition"
+                            ? `🔍 LSP Definition: ${args.symbol ?? filePath}`
+                            : toolName === "LSP_References"
+                              ? `🔎 LSP References: ${args.symbol ?? filePath}`
+                              : toolName === "LSP_DocumentSymbols"
+                                ? `📑 LSP Symbols: ${filePath}`
+                                : toolName === "LSP_Hover"
+                                  ? `ℹ️ LSP Hover: ${args.symbol ?? filePath}`
+                                  : isMcp && mcpMatch
+                                    ? `🔌 MCP: ${mcpMatch.localName}`
+                                    : `⚡ Running: ${args.command ?? ""}`;
 
         // Target resource for permission evaluation
         const target =
@@ -1003,11 +1171,19 @@ Use tools to answer requests (Read, Write, Bash, WebSearch, LSP_Definition, LSP_
             ? String(args.command ?? "")
             : toolName === "WebSearch"
               ? String(args.query ?? "")
-              : toolName.startsWith("LSP_")
-                ? String(args.symbol ?? filePath)
-                : isMcp && mcpMatch
-                  ? mcpMatch.localName
-                  : filePath;
+              : toolName === "Glob"
+                ? String(args.pattern ?? "")
+                : toolName === "Grep"
+                  ? String(args.query ?? "")
+                  : toolName === "Find"
+                    ? String(args.name ?? "")
+                    : toolName === "Tree"
+                      ? String(args.path ?? ".")
+                      : toolName.startsWith("LSP_")
+                        ? String(args.symbol ?? filePath)
+                        : isMcp && mcpMatch
+                          ? mcpMatch.localName
+                          : filePath;
 
         // Evaluate permissions
         const { action, rule } = evaluatePermission(
@@ -1043,6 +1219,8 @@ Use tools to answer requests (Read, Write, Bash, WebSearch, LSP_Definition, LSP_
           !result &&
           (toolName === "Read" ||
             toolName === "Write" ||
+            toolName === "Edit" ||
+            toolName === "Tree" ||
             toolName.startsWith("LSP_"))
         ) {
           const pathCheck = validatePathSafety(filePath);
@@ -1121,6 +1299,42 @@ Use tools to answer requests (Read, Write, Bash, WebSearch, LSP_Definition, LSP_
           } catch (e: any) {
             result = `Error writing ${filePath}: ${e.message}`;
           }
+        } else if (toolName === "Edit") {
+          result = executeEdit(
+            filePath,
+            String(args.old_string ?? ""),
+            String(args.new_string ?? ""),
+            Boolean(args.replace_all),
+          );
+          if (!result.startsWith("Error:")) actionLog.push(`Edited ${filePath}`);
+        } else if (toolName === "Glob") {
+          const pat = String(args.pattern ?? "");
+          result = executeGlob(
+            pat,
+            args.path ? resolveFilePath(args.path) : process.cwd(),
+          );
+          if (!result.startsWith("Error:")) actionLog.push(`Glob: ${pat}`);
+        } else if (toolName === "Grep") {
+          const q = String(args.query ?? "");
+          result = executeGrep(
+            q,
+            args.path ? resolveFilePath(args.path) : ".",
+            args.include,
+          );
+          if (!result.startsWith("Error:")) actionLog.push(`Grep: "${q}"`);
+        } else if (toolName === "Find") {
+          const n = String(args.name ?? "");
+          result = executeFind(
+            n,
+            args.path ? resolveFilePath(args.path) : ".",
+          );
+          if (!result.startsWith("Error:")) actionLog.push(`Find: ${n}`);
+        } else if (toolName === "Tree") {
+          result = executeTree(
+            args.path ? resolveFilePath(args.path) : ".",
+            Number(args.depth ?? 3),
+          );
+          if (!result.startsWith("Error:")) actionLog.push(`Tree: ${args.path ?? "."}`);
         } else if (toolName === "Bash") {
           let command = args.command ?? "";
           if (typeof command === "object" && command !== null) {
