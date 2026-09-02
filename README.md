@@ -31,7 +31,16 @@
   - Formats **headers**, **bold text**, **bullet lists**, **numbered steps**, **blockquotes**, and **tables**.
   - Renders **syntax-highlighted code blocks** inside framed ASCII boxes (`┌── typescript ──┐`).
 
-### 🔬 5. Single-Shot Generalized Introspection (`Inspect`)
+### 🌍 5. System & Environment Awareness (`inspect("hardware")`)
+- Complete hardware and telemetry inspection with hardware-aware model orchestration:
+  - **`os()`**: Windows/Linux distribution, kernel version, platform architecture.
+  - **`cpu()`**: CPU model name, logical core count, clock speeds.
+  - **`memory()`**: Total, used, free RAM in GB and percentage utilization.
+  - **`gpu()`**: Dedicated GPU name (e.g. `NVIDIA RTX 3050 Laptop`), total VRAM, and real-time available VRAM.
+  - **`network()` & `runtime()`**: Active network interfaces, local IP, runtime (Bun/Node.js), process PID, and memory RSS.
+  - **Hardware-Aware Model Orchestrator**: Automatically recommends and switches to the optimal local model based on real-time VRAM/RAM constraints (e.g. recommending `granite` or `gemma` for 4GB VRAM).
+
+### 🔬 6. Single-Shot Generalized Introspection (`Inspect`)
 - Single-shot environment and codebase discovery primitive so the agent doesn't waste 15 tool calls exploring:
   - **`inspect("project")`**: Returns framework, runtime, package manager, tests, linters, databases, key scripts, and git branch in 1 call.
   - **`inspect("environment")`**: OS, CPU cores, system RAM, and available CLI tools in PATH (`bun`, `node`, `git`, `python`, `ollama`, `cargo`, etc.).

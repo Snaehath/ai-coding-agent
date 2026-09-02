@@ -227,36 +227,12 @@ export function inspectProcess(): string {
   }
 }
 
-// 5. Inspect Environment
+import { renderEnvironmentReport } from "./environment.ts";
+
+// 5. Inspect Environment & Hardware Telemetry
 export function inspectEnvironment(): string {
   try {
-    const toolsToCheck = ["bun", "node", "npm", "git", "python", "ollama", "docker", "cargo", "go"];
-    const availableTools: string[] = [];
-
-    for (const tool of toolsToCheck) {
-      try {
-        const cmd = process.platform === "win32" ? `where ${tool}` : `which ${tool}`;
-        execSync(cmd, { stdio: "ignore" });
-        availableTools.push(tool);
-      } catch {
-        /* not in path */
-      }
-    }
-
-    const activeEnvKeys = Object.keys(process.env)
-      .filter((k) => !k.startsWith("="))
-      .sort()
-      .slice(0, 15);
-
-    return [
-      `🌐 Environment Introspection`,
-      `  • Operating System         : ${os.type()} ${os.release()} (${os.arch()})`,
-      `  • Hostname                 : ${os.hostname()}`,
-      `  • CPU Cores                : ${os.cpus().length} cores (${os.cpus()[0]?.model || "Unknown"})`,
-      `  • Total System Memory      : ${(os.totalmem() / 1024 / 1024 / 1024).toFixed(1)} GB (Free: ${(os.freemem() / 1024 / 1024 / 1024).toFixed(1)} GB)`,
-      `  • Shell Tools in PATH      : ${availableTools.join(", ")}`,
-      `  • Active Environment Vars  : ${activeEnvKeys.join(", ")} ... (${Object.keys(process.env).length} total)`,
-    ].join("\n");
+    return renderEnvironmentReport();
   } catch (e: any) {
     return `Error inspecting environment: ${e.message}`;
   }
@@ -320,6 +296,10 @@ export function executeInspect(targetOrArgs: string | InspectOptions = "project"
     case "environment":
     case "env":
     case "system":
+    case "hardware":
+    case "gpu":
+    case "vram":
+    case "ram":
     case "os":
       return inspectEnvironment();
 

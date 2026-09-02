@@ -540,10 +540,11 @@ export const BUILTIN_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
               "directory",
               "process",
               "environment",
+              "hardware",
               "config",
             ],
             description:
-              "The introspection target: 'project' (tech stack, framework, runtime, tests, linters, git), 'file' (size, lines, format), 'directory' (file counts, extensions), 'process' (PID, memory, uptime), 'environment' (OS, tools in PATH), or 'config' (active models, rules).",
+              "The introspection target: 'project' (tech stack, framework, runtime, tests, linters, git), 'hardware'/'environment' (OS, CPU, GPU, VRAM, RAM, recommended Ollama model), 'file' (size, lines, format), 'directory' (file counts, extensions), 'process' (PID, memory, uptime), or 'config' (active models, rules).",
           },
           path: {
             type: "string",
