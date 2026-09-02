@@ -36,6 +36,11 @@ import {
 } from "./filesystem-tools.ts";
 import { executeInspect } from "./inspect.ts";
 import { eventBus } from "./events.ts";
+import {
+  toolRegistry,
+  executeToolSearch,
+  executeToolsAvailable,
+} from "./tool-discovery.ts";
 
 // Constants
 const PLACEHOLDER_RE =
@@ -138,6 +143,8 @@ export function extractEmbeddedToolCall(
     "Find",
     "Tree",
     "Inspect",
+    "ToolSearch",
+    "ToolsAvailable",
     "Bash",
     "WebSearch",
     "LSP_Definition",
@@ -680,7 +687,89 @@ export const BUILTIN_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "ToolSearch",
+      description:
+        "On-demand tool discovery. Search for and dynamically activate specialized tools into the model's active context (e.g. search for 'database', 'web search', 'lsp', 'git', 'docker', or MCP capabilities).",
+      parameters: {
+        type: "object",
+        required: ["query"],
+        properties: {
+          query: {
+            type: "string",
+            description:
+              "Keyword or capability to search for (e.g. 'web search', 'database', 'lsp', 'git', 'mcp').",
+          },
+          category: {
+            type: "string",
+            description:
+              "Optional category filter: 'filesystem', 'terminal', 'introspection', 'navigation', 'web', 'database', 'mcp', 'specialized'.",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "ToolsAvailable",
+      description:
+        "List all available tool catalogs and categories without cluttering prompt context.",
+      parameters: {
+        type: "object",
+        properties: {
+          category: {
+            type: "string",
+            description: "Optional category to filter by.",
+          },
+        },
+      },
+    },
+  },
 ];
+
+// Initialize tool catalog with core and specialized tools
+function setupToolRegistry(mcpTools: McpToolSchema[] = []) {
+  const coreTools = new Set([
+    "Inspect",
+    "Read",
+    "Write",
+    "Edit",
+    "Tree",
+    "Find",
+    "Grep",
+    "Bash",
+    "ToolSearch",
+    "ToolsAvailable",
+  ]);
+
+  for (const tool of BUILTIN_TOOLS) {
+    const name = tool.function.name;
+    let category: any = "specialized";
+    if (["Read", "Write", "Edit", "Tree", "Find", "Grep", "Glob"].includes(name))
+      category = "filesystem";
+    else if (name === "Bash") category = "terminal";
+    else if (name === "Inspect") category = "introspection";
+    else if (name.startsWith("LSP_")) category = "navigation";
+    else if (name === "WebSearch") category = "web";
+    else if (name === "ToolSearch" || name === "ToolsAvailable")
+      category = "specialized";
+
+    toolRegistry.register({
+      name,
+      category,
+      description: tool.function.description ?? "",
+      schema: tool,
+      isCore: coreTools.has(name),
+    });
+  }
+
+  if (mcpTools.length > 0) {
+    toolRegistry.registerMcpTools(mcpTools);
+  }
+}
 
 // Load MCP clients
 async function loadMcpClients(): Promise<Map<string, McpClient>> {
@@ -764,6 +853,9 @@ export async function runAgentMode(
   const mcpClients = await loadMcpClients();
   const mcpTools: McpToolSchema[] = [];
   for (const c of mcpClients.values()) mcpTools.push(...c.getTools());
+  
+  // Setup Tool Discovery Registry
+  setupToolRegistry(mcpTools);
   let allTools = [...BUILTIN_TOOLS, ...mcpTools];
 
   // Discover and match skills
@@ -789,6 +881,8 @@ export async function runAgentMode(
     "Find",
     "Tree",
     "Inspect",
+    "ToolSearch",
+    "ToolsAvailable",
     "Bash",
     "WebSearch",
     ...allTools.map((t) => t.function.name),
@@ -827,6 +921,9 @@ Use tools to answer requests:
     • inspect("environment"): OS, CPU, memory, and tools in PATH (bun, node, git, python, etc.).
     • inspect("process"): PID, memory usage (RSS/heap), uptime, and architecture.
     • inspect("config"): Active model, permission policies, hooks, and skills.
+- On-Demand Tool Discovery:
+  - ToolSearch: When you need specialized capabilities (web search, LSP code navigation, database tools, MCP integrations), search for and dynamically activate them (e.g. ToolSearch({ query: "web search" }) or ToolSearch({ query: "lsp" })).
+  - ToolsAvailable: List available tool categories without consuming context.
 - File Operations:
   - Read: Read full file contents.
   - Write: Create new files or overwrite complete files.
@@ -834,12 +931,7 @@ Use tools to answer requests:
 - Filesystem & Search Intelligence:
   - Tree: Explore directory structure and hierarchy (e.g. tree("app/", 2)).
   - Find: Locate files or directories by name (e.g. find("package.json")).
-  - Glob: Match files by glob pattern (e.g. glob("src/**/*.ts")).
   - Grep: Search file contents for keywords, regex, or code occurrences with line numbers (e.g. grep("useEffect", "src/")).
-- Code Navigation:
-  - LSP tools (LSP_Definition, LSP_References, LSP_DocumentSymbols, LSP_Hover): Find symbol definitions, references, signatures, and document outlines.
-- External Knowledge:
-  - WebSearch: Look up up-to-date documentation, external libraries, and real-time facts.
 - Shell:
   - Bash: Execute build, test, git, or command-line tasks.${mcpList}${skillList}${activeSkillPrompt}
 - Task Alignment: Stay strictly focused on the user's specific coding task. Do not deviate or execute unrelated system tasks.
@@ -933,7 +1025,7 @@ Use tools to answer requests:
       const requestPayload: any = {
         model,
         messages: trimContextMessages(messages),
-        tools: allTools,
+        tools: activeSkill?.tools ? allTools : toolRegistry.getActiveSchemas(),
         stream: true,
       };
 
@@ -1255,19 +1347,23 @@ Use tools to answer requests:
                         ? `🌲 Tree: ${args.path ?? "."}`
                         : toolName === "Inspect"
                           ? `🔬 Inspecting: ${args.target ?? "project"}`
-                          : toolName === "WebSearch"
-                            ? `🌐 Searching: "${args.query ?? ""}"`
-                          : toolName === "LSP_Definition"
-                            ? `🔍 LSP Definition: ${args.symbol ?? filePath}`
-                            : toolName === "LSP_References"
-                              ? `🔎 LSP References: ${args.symbol ?? filePath}`
-                              : toolName === "LSP_DocumentSymbols"
-                                ? `📑 LSP Symbols: ${filePath}`
-                                : toolName === "LSP_Hover"
-                                  ? `ℹ️ LSP Hover: ${args.symbol ?? filePath}`
-                                  : isMcp && mcpMatch
-                                    ? `🔌 MCP: ${mcpMatch.localName}`
-                                    : `⚡ Running: ${args.command ?? ""}`;
+                          : toolName === "ToolSearch"
+                            ? `🔎 Searching Tools: "${args.query ?? ""}"`
+                            : toolName === "ToolsAvailable"
+                              ? `🧰 Available Tools`
+                              : toolName === "WebSearch"
+                                ? `🌐 Searching: "${args.query ?? ""}"`
+                              : toolName === "LSP_Definition"
+                                ? `🔍 LSP Definition: ${args.symbol ?? filePath}`
+                                : toolName === "LSP_References"
+                                  ? `🔎 LSP References: ${args.symbol ?? filePath}`
+                                  : toolName === "LSP_DocumentSymbols"
+                                    ? `📑 LSP Symbols: ${filePath}`
+                                    : toolName === "LSP_Hover"
+                                      ? `ℹ️ LSP Hover: ${args.symbol ?? filePath}`
+                                      : isMcp && mcpMatch
+                                        ? `🔌 MCP: ${mcpMatch.localName}`
+                                        : `⚡ Running: ${args.command ?? ""}`;
 
         // Target resource for permission evaluation
         const target =
@@ -1285,11 +1381,15 @@ Use tools to answer requests:
                       ? String(args.path ?? ".")
                       : toolName === "Inspect"
                         ? String(args.target ?? "project")
-                        : toolName.startsWith("LSP_")
-                          ? String(args.symbol ?? filePath)
-                          : isMcp && mcpMatch
-                            ? mcpMatch.localName
-                            : filePath;
+                        : toolName === "ToolSearch"
+                          ? String(args.query ?? "")
+                          : toolName === "ToolsAvailable"
+                            ? String(args.category ?? "all")
+                            : toolName.startsWith("LSP_")
+                              ? String(args.symbol ?? filePath)
+                              : isMcp && mcpMatch
+                                ? mcpMatch.localName
+                                : filePath;
 
         // Evaluate permissions
         const { action, rule } = evaluatePermission(
@@ -1468,6 +1568,13 @@ Use tools to answer requests:
           result = executeInspect(args);
           if (!result.startsWith("Error:"))
             actionLog.push(`Inspect ${args.target || "project"}`);
+        } else if (toolName === "ToolSearch") {
+          result = executeToolSearch(String(args.query ?? ""), args.category);
+          if (!result.startsWith("Error:"))
+            actionLog.push(`ToolSearch: ${args.query}`);
+        } else if (toolName === "ToolsAvailable") {
+          result = executeToolsAvailable(args.category);
+          if (!result.startsWith("Error:")) actionLog.push(`ToolsAvailable`);
         } else if (toolName === "Bash") {
           let command = args.command ?? "";
           if (typeof command === "object" && command !== null) {

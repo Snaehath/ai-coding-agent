@@ -40,7 +40,13 @@
   - **`inspect("directory", path)`**: Subdirectory count, file counts, and extension breakdown.
   - **`inspect("config")`**: Active models, security permission rules, and registered skills.
 
-### 🗂️ 6. Specialized Filesystem Intelligence Tools
+### 🧰 6. On-Demand Tool Discovery & Progressive Context Loading
+- Instead of dumping 50+ tool schemas into every prompt payload (wasting thousands of context tokens):
+  - **Lean Core Toolset**: Initially activates only high-leverage core primitives (`Inspect`, `Read`, `Write`, `Edit`, `Tree`, `Find`, `Grep`, `Bash`, `ToolSearch`, `ToolsAvailable`).
+  - **`ToolsAvailable()`**: Lists available catalogs across categories (`filesystem`, `navigation`, `web`, `database`, `mcp`, `specialized`) without loading their JSON schemas into prompt context.
+  - **`ToolSearch("query")`**: Dynamically searches and hot-loads specialized capabilities (e.g. `WebSearch`, LSP symbol tools, custom database tools, or MCP servers) into the active toolset on-demand.
+
+### 🗂️ 7. Specialized Filesystem Intelligence Tools
 - Native, token-efficient tools so the LLM doesn't rely on raw Bash commands for every inspection:
   - **`Edit`**: First-class structural code modification (`replace`, `insert_after`, `insert_before`, `delete`, `append`, `prepend`) with AST syntax protection.
   - **`Tree`**: Structured, depth-limited ASCII directory hierarchy (e.g. `tree("src/", 2)`).
