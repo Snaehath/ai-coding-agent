@@ -21,6 +21,12 @@ import {
   estimateMessagesTokens,
   fetchModelContextStats,
 } from "./telemetry.ts";
+import {
+  validatePathSafety,
+  validateCommandSafety,
+  sanitizeSecrets,
+  createToolLoopDetector,
+} from "./guardrails.ts";
 
 // Constants
 const PLACEHOLDER_RE =
@@ -603,10 +609,12 @@ export async function runAgentMode(
       role: "system",
       content: `You are ${agentName}, an autonomous coding assistant.
 Use tools to answer requests (Read, Write, Bash, WebSearch, LSP_Definition, LSP_References, LSP_DocumentSymbols, LSP_Hover).
+- Task Alignment: Stay strictly focused on the user's specific coding task. Do not deviate, execute unrelated system tasks, or attempt unauthorized operations.
 - When navigating code, finding where symbols/functions are defined, or locating usages across the project, use LSP tools (LSP_Definition, LSP_References, LSP_DocumentSymbols, LSP_Hover).
 - When a file path is mentioned, immediately invoke Read — never ask the user to provide file paths or contents.
 - When asked about real-time events, latest library documentation, current packages, or external web queries, use WebSearch to find up-to-date facts.${mcpList}${skillList}${activeSkillPrompt}
-- IMPORTANT: When a tool returns a result (e.g. current time, directory listing, file contents, code definition), immediately present that answer in natural language to the user. Do NOT call the same tool again.
+- Security & Path Safety: Never attempt to access private keys (.ssh), cloud credentials (.aws), system directories (C:\\Windows, /etc), or execute destructive filesystem commands.
+- Loop Prevention: When a tool returns a result or error, do NOT invoke the exact same tool with identical arguments again. Instead, present that answer or explain the issue in natural language to the user.
 - Never output raw JSON tool calls in your final response.`,
     });
   }
@@ -653,10 +661,11 @@ Use tools to answer requests (Read, Write, Bash, WebSearch, LSP_Definition, LSP_
   const MAX_TURNS = 8;
   let turns = 0;
 
-  // Load permission and hooks configuration
+  // Load permission, hooks, and security guardrail configuration
   const permConfig = loadPermissionConfig();
   const runtimePermCache = new Map<string, PermissionAction>();
   const hooksConfig = loadHooksConfig();
+  const loopDetector = createToolLoopDetector(3);
   const sessionId = sessionFilePath
     ? path.basename(sessionFilePath, ".jsonl")
     : "session_" + Date.now().toString(36);
@@ -917,11 +926,12 @@ Use tools to answer requests (Read, Write, Bash, WebSearch, LSP_Definition, LSP_
         });
 
         const cleaned = cleanAssistantContent(fullContent);
-        const finalContent =
+        const rawFinal =
           cleaned ||
           (actionLog.length > 0
             ? `✅ Completed:\n${actionLog.map((a) => `  • ${a}`).join("\n")}`
             : "✅ Done.");
+        const finalContent = sanitizeSecrets(rawFinal);
         const finalMsg = { role: "assistant", content: finalContent };
         messages.push(finalMsg as any);
         if (sessionFilePath) appendSessionMessage(sessionFilePath, finalMsg);
@@ -1025,6 +1035,44 @@ Use tools to answer requests (Read, Write, Bash, WebSearch, LSP_Definition, LSP_
               `  ${colors.dim("↳")} ${colors.boldYellow(`[Declined by user]`)} ${toolName}\n`,
             );
             result = `Error: User denied permission to execute ${toolName} on "${target}".`;
+          }
+        }
+
+        // Security Guardrail 1: Sensitive path protection
+        if (
+          !result &&
+          (toolName === "Read" ||
+            toolName === "Write" ||
+            toolName.startsWith("LSP_"))
+        ) {
+          const pathCheck = validatePathSafety(filePath);
+          if (!pathCheck.safe) {
+            process.stdout.write(
+              `  ${colors.dim("↳")} ${colors.red(`[⛔ Blocked by Guardrail]`)} ${toolName}: ${filePath} (${pathCheck.reason})\n`,
+            );
+            result = `Error: Security Guardrail: Access to "${filePath}" was blocked. ${pathCheck.reason}`;
+          }
+        }
+
+        // Security Guardrail 2: Dangerous command blocking
+        if (!result && toolName === "Bash") {
+          const cmdCheck = validateCommandSafety(String(args.command ?? ""));
+          if (!cmdCheck.safe) {
+            process.stdout.write(
+              `  ${colors.dim("↳")} ${colors.red(`[⛔ Blocked by Guardrail]`)} Bash: ${args.command} (${cmdCheck.reason})\n`,
+            );
+            result = `Error: Security Guardrail: Command "${args.command}" was blocked. ${cmdCheck.reason}`;
+          }
+        }
+
+        // Security Guardrail 3: Repetitive tool loop prevention
+        if (!result) {
+          const loopCheck = loopDetector.check(toolName, args);
+          if (loopCheck.isLooping) {
+            process.stdout.write(
+              `  ${colors.dim("↳")} ${colors.boldYellow(`[⚠️ Loop Guardrail Intercept]`)} ${toolName} repeated ${loopCheck.repeatCount} times\n`,
+            );
+            result = `Error: Guardrail: Detected repetitive tool loop (${loopCheck.repeatCount} identical calls to ${toolName}). Stop retrying and report the issue to the user.`;
           }
         }
 
@@ -1190,7 +1238,12 @@ Use tools to answer requests (Read, Write, Bash, WebSearch, LSP_Definition, LSP_
         );
 
         // Record tool result
-        const toolMsg = { role: "tool", tool_call_id: tc.id, content: result };
+        const sanitizedResult = sanitizeSecrets(result ?? "");
+        const toolMsg = {
+          role: "tool",
+          tool_call_id: tc.id,
+          content: sanitizedResult,
+        };
         messages.push(toolMsg);
         if (sessionFilePath) appendSessionMessage(sessionFilePath, toolMsg);
       }
