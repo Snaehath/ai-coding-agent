@@ -322,37 +322,208 @@ export function executeTree(
   }
 }
 
-// 5. Edit: In-place string replacement
+// Syntax validation helper to prevent code corruption
+export function validateCodeSyntax(filePath: string, content: string): { valid: boolean; error?: string } {
+  const ext = path.extname(filePath).toLowerCase();
+
+  // 1. JSON validation
+  if (ext === ".json") {
+    try {
+      JSON.parse(content);
+      return { valid: true };
+    } catch (e: any) {
+      return { valid: false, error: `Invalid JSON syntax: ${e.message}` };
+    }
+  }
+
+  // 2. TypeScript / JavaScript syntax validation using Bun's native Transpiler
+  if ([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"].includes(ext)) {
+    try {
+      if (typeof Bun !== "undefined" && (Bun as any).Transpiler) {
+        const transpiler = new (Bun as any).Transpiler({
+          loader: ext === ".tsx" ? "tsx" : ext === ".jsx" ? "jsx" : ext.startsWith(".t") ? "ts" : "js",
+        });
+        transpiler.transformSync(content);
+      }
+      return { valid: true };
+    } catch (e: any) {
+      return { valid: false, error: `Syntax error in ${path.basename(filePath)}: ${e.message}` };
+    }
+  }
+
+  // 3. Basic bracket balancing for other code files
+  if ([".py", ".rs", ".go", ".c", ".cpp", ".java"].includes(ext)) {
+    const stack: string[] = [];
+    const pairs: Record<string, string> = { "(": ")", "{": "}", "[": "]" };
+    let inString: string | null = null;
+
+    for (let i = 0; i < content.length; i++) {
+      const char = content[i];
+      if ((char === '"' || char === "'") && (i === 0 || content[i - 1] !== "\\")) {
+        if (!inString) inString = char;
+        else if (inString === char) inString = null;
+        continue;
+      }
+      if (inString) continue;
+
+      if (char === "(" || char === "{" || char === "[") {
+        stack.push(char);
+      } else if (char === ")" || char === "}" || char === "]") {
+        const top = stack.pop();
+        if (!top || pairs[top] !== char) {
+          return { valid: false, error: `Unmatched bracket '${char}' detected around character ${i}.` };
+        }
+      }
+    }
+    if (stack.length > 0) {
+      return { valid: false, error: `Unclosed bracket '${stack.pop()}' detected.` };
+    }
+  }
+
+  return { valid: true };
+}
+
+export interface EditParams {
+  filePath: string;
+  operation?: "replace" | "insert_after" | "insert_before" | "delete" | "append" | "prepend";
+  oldString?: string;
+  newString?: string;
+  anchor?: string;
+  content?: string;
+  replaceAll?: boolean;
+  validateAst?: boolean;
+}
+
+// 5. Edit: First-class structural file editor
 export function executeEdit(
-  filePath: string,
-  oldString: string,
-  newString: string,
-  replaceAll: boolean = false,
+  rawFilePath: string,
+  rawOldOrParams: string | EditParams,
+  rawNewOrAnchor?: string,
+  rawReplaceAllOrContent?: boolean | string,
 ): string {
   try {
-    const resolved = path.resolve(process.cwd(), filePath);
+    let params: EditParams;
+
+    if (typeof rawOldOrParams === "object" && rawOldOrParams !== null) {
+      params = {
+        filePath: (rawOldOrParams as any).file_path || (rawOldOrParams as any).file || rawFilePath,
+        operation: (rawOldOrParams as any).operation || "replace",
+        oldString: (rawOldOrParams as any).old_string || (rawOldOrParams as any).old || (rawOldOrParams as any).target,
+        newString: (rawOldOrParams as any).new_string || (rawOldOrParams as any).new || (rawOldOrParams as any).content,
+        anchor: (rawOldOrParams as any).anchor || (rawOldOrParams as any).target,
+        content: (rawOldOrParams as any).content || (rawOldOrParams as any).new_string || (rawOldOrParams as any).new,
+        replaceAll: Boolean((rawOldOrParams as any).replace_all || (rawOldOrParams as any).replaceAll),
+        validateAst: (rawOldOrParams as any).validate_ast !== false,
+      };
+    } else {
+      params = {
+        filePath: rawFilePath,
+        operation: "replace",
+        oldString: String(rawOldOrParams ?? ""),
+        newString: String(rawNewOrAnchor ?? ""),
+        content: String(rawNewOrAnchor ?? ""),
+        replaceAll: Boolean(rawReplaceAllOrContent),
+        validateAst: true,
+      };
+    }
+
+    const resolved = path.resolve(process.cwd(), params.filePath);
     if (!fs.existsSync(resolved)) {
-      return `Error: file not found: ${filePath}`;
+      return `Error: file not found: ${params.filePath}`;
     }
 
-    const content = fs.readFileSync(resolved, "utf-8");
+    const currentContent = fs.readFileSync(resolved, "utf-8");
+    const op = params.operation || "replace";
+    let updatedContent = currentContent;
 
-    if (!content.includes(oldString)) {
-      return `Error: old_string not found in ${filePath}. Please verify exact characters, indentation, and line breaks.`;
+    // Operation 1: Insert After
+    if (op === "insert_after") {
+      const anchor = params.anchor || params.oldString;
+      const toInsert = params.content || params.newString || "";
+      if (!anchor) return `Error: 'anchor' is required for insert_after operation.`;
+
+      const lines = currentContent.split(/\r?\n/);
+      const matchIdx = lines.findIndex((l) => l.includes(anchor));
+      if (matchIdx === -1) {
+        return `Error: anchor "${anchor}" not found in ${params.filePath}.`;
+      }
+
+      // Preserve indentation if applicable
+      lines.splice(matchIdx + 1, 0, toInsert);
+      updatedContent = lines.join("\n");
+    }
+    // Operation 2: Insert Before
+    else if (op === "insert_before") {
+      const anchor = params.anchor || params.oldString;
+      const toInsert = params.content || params.newString || "";
+      if (!anchor) return `Error: 'anchor' is required for insert_before operation.`;
+
+      const lines = currentContent.split(/\r?\n/);
+      const matchIdx = lines.findIndex((l) => l.includes(anchor));
+      if (matchIdx === -1) {
+        return `Error: anchor "${anchor}" not found in ${params.filePath}.`;
+      }
+
+      lines.splice(matchIdx, 0, toInsert);
+      updatedContent = lines.join("\n");
+    }
+    // Operation 3: Delete
+    else if (op === "delete") {
+      const target = params.oldString || params.anchor;
+      if (!target) return `Error: target text or anchor is required for delete operation.`;
+      if (!currentContent.includes(target)) {
+        return `Error: target text "${target}" not found in ${params.filePath}.`;
+      }
+      updatedContent = params.replaceAll
+        ? currentContent.replaceAll(target, "")
+        : currentContent.replace(target, "");
+    }
+    // Operation 4: Append
+    else if (op === "append") {
+      const toAppend = params.content || params.newString || "";
+      updatedContent = currentContent.endsWith("\n")
+        ? currentContent + toAppend + "\n"
+        : currentContent + "\n" + toAppend + "\n";
+    }
+    // Operation 5: Prepend
+    else if (op === "prepend") {
+      const toPrepend = params.content || params.newString || "";
+      updatedContent = toPrepend + "\n" + currentContent;
+    }
+    // Operation 6: Replace (Default)
+    else {
+      const oldStr = params.oldString || params.anchor || "";
+      const newStr = params.newString ?? params.content ?? "";
+
+      if (!oldStr) {
+        return `Error: 'old_string' (or 'old') is required for replace operation.`;
+      }
+
+      if (!currentContent.includes(oldStr)) {
+        return `Error: old_string not found in ${params.filePath}. Please verify exact characters, indentation, and line breaks.`;
+      }
+
+      const occurrences = currentContent.split(oldStr).length - 1;
+      if (occurrences > 1 && !params.replaceAll) {
+        return `Error: old_string occurred ${occurrences} times in ${params.filePath}. Specify more surrounding context to match a unique block or pass replace_all: true.`;
+      }
+
+      updatedContent = params.replaceAll
+        ? currentContent.replaceAll(oldStr, newStr)
+        : currentContent.replace(oldStr, newStr);
     }
 
-    const occurrences = content.split(oldString).length - 1;
-    if (occurrences > 1 && !replaceAll) {
-      return `Error: old_string occurred ${occurrences} times in ${filePath}. Specify more surrounding context to match a unique block or pass replace_all: true.`;
+    // AST / Syntax Integrity Validation Guard
+    if (params.validateAst !== false) {
+      const syntaxCheck = validateCodeSyntax(resolved, updatedContent);
+      if (!syntaxCheck.valid) {
+        return `Error: Edit aborted — AST syntax validation failed: ${syntaxCheck.error}. The file was NOT modified to prevent code corruption.`;
+      }
     }
 
-    const updated = replaceAll
-      ? content.replaceAll(oldString, newString)
-      : content.replace(oldString, newString);
-
-    fs.writeFileSync(resolved, updated, "utf-8");
-    return `Successfully edited ${filePath} (${replaceAll ? `replaced ${occurrences} occurrences` : "1 replacement made"}).`;
+    fs.writeFileSync(resolved, updatedContent, "utf-8");
+    return `Successfully edited ${params.filePath} (operation: ${op}).`;
   } catch (e: any) {
-    return `Error editing ${filePath}: ${e.message}`;
+    return `Error editing ${rawFilePath}: ${e.message}`;
   }
 }

@@ -348,23 +348,46 @@ export const BUILTIN_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "Edit",
       description:
-        "Perform exact string replacement inside an existing file. Use this to update, fix, or modify code without rewriting the entire file.",
+        "Perform first-class structural code edits on existing files. Supports operations: 'replace' (default), 'insert_after', 'insert_before', 'delete', 'append', 'prepend' with automatic syntax integrity checks to prevent file corruption.",
       parameters: {
         type: "object",
-        required: ["file_path", "old_string", "new_string"],
+        required: ["file_path"],
         properties: {
           file_path: {
             type: "string",
             description: "Path to the file to edit.",
           },
+          operation: {
+            type: "string",
+            enum: [
+              "replace",
+              "insert_after",
+              "insert_before",
+              "delete",
+              "append",
+              "prepend",
+            ],
+            description:
+              "Edit operation to perform. Defaults to 'replace'.",
+          },
           old_string: {
             type: "string",
             description:
-              "The exact existing text block to replace (must match exactly).",
+              "Existing text block to replace or delete (for 'replace' or 'delete').",
           },
           new_string: {
             type: "string",
-            description: "The replacement content.",
+            description: "Replacement content for 'replace'.",
+          },
+          anchor: {
+            type: "string",
+            description:
+              "Anchor text or line to find for 'insert_after' or 'insert_before'.",
+          },
+          content: {
+            type: "string",
+            description:
+              "Text content to insert, append, or prepend.",
           },
           replace_all: {
             type: "boolean",
@@ -1300,12 +1323,7 @@ Use tools to answer requests:
             result = `Error writing ${filePath}: ${e.message}`;
           }
         } else if (toolName === "Edit") {
-          result = executeEdit(
-            filePath,
-            String(args.old_string ?? ""),
-            String(args.new_string ?? ""),
-            Boolean(args.replace_all),
-          );
+          result = executeEdit(filePath, args);
           if (!result.startsWith("Error:")) actionLog.push(`Edited ${filePath}`);
         } else if (toolName === "Glob") {
           const pat = String(args.pattern ?? "");
