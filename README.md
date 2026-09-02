@@ -49,7 +49,30 @@
   - **Project Entropy Score**: Calculates overall codebase entropy percentage (e.g. `12% [🟢 Clean]`) with actionable cleanup instructions.
   - **REPL Slash Command**: Type `/entropy` or `/gc` in the interactive terminal for an instant codebase health audit.
 
-### 🗜️ 8. Context Compression & Low-VRAM Summarization Engine
+### 🧅 8. Request & Response Middleware Pipeline (`.agents/middleware/`)
+- Distinct from event-based **Hooks**, **Middleware** intercepts and mutates the live request/response stream:
+  ```text
+  User Prompt ➔ [Middleware 1] ➔ [Middleware 2] ➔ Model ➔ [Middleware 2] ➔ [Middleware 1] ➔ Response
+  ```
+- **Capabilities**:
+  - **`beforeRequest(ctx)`**: Inspect, mutate, or enrich `prompt`, `messages`, `tools`, `modelParams`, or **short-circuit** response without hitting the LLM.
+  - **`afterResponse(ctx)`**: Clean, format, sanitize, redact API keys/secrets, or transform model outputs.
+  - **Onion Execution Order**: Lower priority executes first on incoming requests and last on outgoing responses.
+  - **Dynamic Extension**: Automatically loads `.ts`/`.js` middleware modules from `.agents/middleware/` (e.g. `security.ts`, `compression.ts`, `logging.ts`, `routing.ts`, `cost.ts`).
+  - **REPL Slash Command**: Type `/middleware` in the terminal to inspect all active interceptors.
+
+### 🔄 9. Explicit Agent Lifecycle State Machine (`app/state-machine.ts`)
+- Gives the agent an explicit, deterministic state lifecycle:
+  ```text
+  IDLE ➔ UNDERSTANDING ➔ PLANNING ➔ EXECUTING ➔ VERIFYING ➔ WAITING ➔ COMPLETED
+  ```
+- **Capabilities**:
+  - **State Ownership**: Owns agent state and validates state transitions (`onEnter`, `onExit`, `onTransition`).
+  - **Subsystem Subscriptions**: UI, Telemetry, Permissions, Hooks, and JSON-RPC servers can subscribe to `state.changed` transitions.
+  - **Dwell Time & Transition Tracing**: Tracks exact dwell times per state for deep performance profiling.
+  - **REPL Slash Command**: Type `/state` or `/lifecycle` in the terminal to inspect the active state and lifecycle transition timeline.
+
+### 🗜️ 10. Context Compression & Low-VRAM Summarization Engine
 - Tailored for low-memory local models (3B / 7B / 8B) and tight 4GB VRAM limits so the model never overflows context or chokes on massive 10,000-line files:
   - **`extract_symbols(filePath)`**: Extracts all function signatures, classes, interfaces, and types from a file without keeping the internal bodies (up to **95% token savings**).
   - **`summarize_file(filePath)`**: Generates a high-level compressed skeleton, dependencies, and structural outline.

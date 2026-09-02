@@ -28,6 +28,8 @@ import {
 } from "./markdown.ts";
 import { renderModelBanner } from "./banners.ts";
 import { renderEntropyReport } from "./entropy.ts";
+import { middlewarePipeline } from "./middleware.ts";
+import { stateMachine } from "./state-machine.ts";
 
 // ANSI terminal colors
 export const colors = {
@@ -207,6 +209,8 @@ export async function runReplMode(options: {
               `\n  ${colors.boldYellow("/skills")}           List available skills` +
               `\n  ${colors.boldYellow("/permissions")}      List active permission policies` +
               `\n  ${colors.boldYellow("/hooks")}            List active lifecycle hooks` +
+              `\n  ${colors.boldYellow("/middleware")}       List active request/response interceptors` +
+              `\n  ${colors.boldYellow("/state")}            View agent lifecycle state machine & history` +
               `\n  ${colors.boldYellow("/entropy")} | ${colors.boldYellow("/gc")}   Scan for dead code, unused deps & project entropy` +
               `\n  ${colors.boldYellow("/stats")}            View real-time agent telemetry & metrics` +
               `\n  ${colors.boldYellow("/clear")} | ${colors.boldYellow("/new")}     Start a fresh session` +
@@ -448,6 +452,33 @@ export async function runReplMode(options: {
             );
           }
           console.log();
+          break;
+        }
+
+        case "/middleware": {
+          await middlewarePipeline.loadUserMiddlewares();
+          const list = middlewarePipeline.list();
+          console.log("\n" + colors.bold("Active Request/Response Middlewares:"));
+          console.log(colors.gray("─".repeat(68)));
+          for (const m of list) {
+            const priorityStr = colors.yellow(`[priority: ${m.priority ?? 50}]`);
+            const hooks = [
+              m.beforeRequest ? "beforeRequest" : null,
+              m.afterResponse ? "afterResponse" : null,
+            ]
+              .filter(Boolean)
+              .join(", ");
+            console.log(
+              `• ${colors.boldCyan(m.name)} ${priorityStr} ${colors.dim(`(${hooks})`)}\n  ${colors.gray(m.description ?? "No description")}`,
+            );
+          }
+          console.log();
+          break;
+        }
+
+        case "/state":
+        case "/lifecycle": {
+          console.log("\n" + stateMachine.renderStateReport() + "\n");
           break;
         }
 

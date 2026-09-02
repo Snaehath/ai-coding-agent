@@ -111,6 +111,15 @@ export type AgentEvent =
       beforeTokens: number;
       afterTokens: number;
       timestamp: string;
+    }
+  | {
+      type: "state.changed";
+      sessionId: string;
+      from: string;
+      to: string;
+      durationMs: number;
+      context?: Record<string, any>;
+      timestamp: string;
     };
 
 // Singleton Event Bus for all subsystems (TUI, Telemetry, VS Code, Web UI, Hooks)

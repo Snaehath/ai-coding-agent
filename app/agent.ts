@@ -50,6 +50,8 @@ import {
 } from "./context-engine.ts";
 import { executeCausalAnalyze } from "./causal-graph.ts";
 import { renderEntropyReport } from "./entropy.ts";
+import { middlewarePipeline } from "./middleware.ts";
+import { stateMachine } from "./state-machine.ts";
 
 // Constants
 const PLACEHOLDER_RE =
@@ -974,6 +976,104 @@ function encodeLocalImageToDataUrl(filePath: string): string | null {
   }
 }
 
+// Format human-readable tool execution summary
+function formatToolSummary(
+  toolName: string,
+  args: any,
+  filePath: string,
+  mcpMatch?: { serverId: string; localName: string } | null,
+): string {
+  switch (toolName) {
+    case "Read":
+      return `📖 Reading  ${filePath}`;
+    case "Write":
+      return `📝 Writing  ${filePath}`;
+    case "Edit":
+      return `✏️ Editing  ${filePath}`;
+    case "Glob":
+      return `🔎 Glob: "${args.pattern ?? ""}"`;
+    case "Grep":
+      return `🔍 Grep: "${args.query ?? ""}" in ${args.path ?? "."}`;
+    case "Find":
+      return `📂 Find: "${args.name ?? ""}"`;
+    case "Tree":
+      return `🌲 Tree: ${args.path ?? "."}`;
+    case "Inspect":
+      return `🔬 Inspecting: ${args.target ?? "project"}`;
+    case "ToolSearch":
+      return `🔎 Searching Tools: "${args.query ?? ""}"`;
+    case "ToolsAvailable":
+      return `🧰 Available Tools`;
+    case "ExtractSymbols":
+      return `📑 Extracting Symbols: ${filePath}`;
+    case "SummarizeFile":
+      return `🗜️ Summarizing File: ${filePath}`;
+    case "ContextExtract":
+      return `🎯 Context Window: ${filePath} (around "${args.query ?? ""}")`;
+    case "SummarizeDiff":
+      return `📊 Summarizing Diff: ${args.file_path ?? "all"}`;
+    case "CausalAnalyze":
+      return `🔬 Causal Analysis: "${args.query ?? ""}"`;
+    case "DeadCodeScan":
+      return `🧹 Scanning Dead Code & Project Entropy`;
+    case "WebSearch":
+      return `🌐 Searching: "${args.query ?? ""}"`;
+    case "LSP_Definition":
+      return `🔍 LSP Definition: ${args.symbol ?? filePath}`;
+    case "LSP_References":
+      return `🔎 LSP References: ${args.symbol ?? filePath}`;
+    case "LSP_DocumentSymbols":
+      return `📑 LSP Symbols: ${filePath}`;
+    case "LSP_Hover":
+      return `ℹ️ LSP Hover: ${args.symbol ?? filePath}`;
+    default:
+      if (mcpMatch) return `🔌 MCP: ${mcpMatch.localName}`;
+      return `⚡ Running: ${args.command ?? ""}`;
+  }
+}
+
+// Extract target resource descriptor for permission evaluation & guardrails
+function extractToolTarget(
+  toolName: string,
+  args: any,
+  filePath: string,
+  mcpMatch?: { serverId: string; localName: string } | null,
+): string {
+  switch (toolName) {
+    case "Bash":
+      return String(args.command ?? "");
+    case "WebSearch":
+    case "Grep":
+      return String(args.query ?? "");
+    case "Glob":
+      return String(args.pattern ?? "");
+    case "Find":
+      return String(args.name ?? "");
+    case "Tree":
+      return String(args.path ?? ".");
+    case "Inspect":
+      return String(args.target ?? "project");
+    case "ToolSearch":
+      return String(args.query ?? "");
+    case "ToolsAvailable":
+      return String(args.category ?? "all");
+    case "ExtractSymbols":
+    case "SummarizeFile":
+    case "ContextExtract":
+      return filePath;
+    case "SummarizeDiff":
+      return String(args.file_path ?? "diff");
+    case "CausalAnalyze":
+      return String(args.query ?? "causal");
+    case "DeadCodeScan":
+      return String(args.path ?? "workspace");
+    default:
+      if (toolName.startsWith("LSP_")) return String(args.symbol ?? filePath);
+      if (mcpMatch) return mcpMatch.localName;
+      return filePath;
+  }
+}
+
 // Core agent loop
 export async function runAgentMode(
   prompt: string,
@@ -1154,7 +1254,25 @@ Use tools to answer requests:
   const sessionId = sessionFilePath
     ? path.basename(sessionFilePath, ".jsonl")
     : "session_" + Date.now().toString(36);
-  const modelStats = await fetchModelContextStats(model);
+  // Lifecycle State Machine: UNDERSTANDING
+  stateMachine.transitionTo("UNDERSTANDING", { sessionId, prompt });
+
+  // Load and execute Request Middleware Pipeline
+  await middlewarePipeline.loadUserMiddlewares();
+  const reqCtx = await middlewarePipeline.executeBeforeRequest({
+    sessionId,
+    prompt,
+    messages,
+    tools: allTools,
+    model,
+    thinkingEffort: process.env.THINKING_EFFORT,
+    metadata: {},
+  });
+
+  if (reqCtx.shortCircuitResponse) {
+    stateMachine.transitionTo("COMPLETED", { sessionId, shortCircuited: true });
+    return reqCtx.shortCircuitResponse;
+  }
 
   // Emit session.started event
   eventBus.emit({
@@ -1164,6 +1282,8 @@ Use tools to answer requests:
     timestamp: new Date().toISOString(),
   });
 
+  const modelStats = await fetchModelContextStats(model);
+
   try {
     while (turns++ < MAX_TURNS) {
       const turnStart = performance.now();
@@ -1172,6 +1292,9 @@ Use tools to answer requests:
       let turnErrors = 0;
 
       const thinkingEffort = process.env.THINKING_EFFORT?.toLowerCase().trim();
+
+      // Lifecycle State Machine: PLANNING
+      stateMachine.transitionTo("PLANNING", { sessionId, turn: turns });
 
       // Emit model.started event
       eventBus.emit({
@@ -1201,6 +1324,11 @@ Use tools to answer requests:
         model,
         messages: trimContextMessages(compactedMessages),
         tools: activeSkill?.tools ? allTools : toolRegistry.getActiveSchemas(),
+        extra_body: {
+          options: {
+            num_ctx: modelStats.configuredContextLength || 32768,
+          },
+        },
         stream: true,
       };
 
@@ -1459,11 +1587,25 @@ Use tools to answer requests:
             ? `✅ Completed:\n${actionLog.map((a) => `  • ${a}`).join("\n")}`
             : "✅ Done.");
         const finalContent = sanitizeSecrets(rawFinal);
-        const finalMsg = { role: "assistant", content: finalContent };
+
+        // Execute Response Middleware Pipeline
+        const resCtx = await middlewarePipeline.executeAfterResponse({
+          sessionId,
+          rawResponse: fullContent || rawFinal,
+          cleanedResponse: finalContent,
+          model,
+          turns,
+          metadata: reqCtx.metadata,
+        });
+
+        // Lifecycle State Machine: COMPLETED
+        stateMachine.transitionTo("COMPLETED", { sessionId, turns });
+
+        const finalMsg = { role: "assistant", content: resCtx.cleanedResponse };
         messages.push(finalMsg as any);
         if (sessionFilePath) appendSessionMessage(sessionFilePath, finalMsg);
         if (onToken) onToken("\n");
-        return finalContent;
+        return resCtx.cleanedResponse;
       }
 
       // Record assistant turn in history
@@ -1505,88 +1647,8 @@ Use tools to answer requests:
           }
         }
 
-        const summary =
-          toolName === "Read"
-            ? `📖 Reading  ${filePath}`
-            : toolName === "Write"
-              ? `📝 Writing  ${filePath}`
-              : toolName === "Edit"
-                ? `✏️ Editing  ${filePath}`
-                : toolName === "Glob"
-                  ? `🔎 Glob: "${args.pattern ?? ""}"`
-                  : toolName === "Grep"
-                    ? `🔍 Grep: "${args.query ?? ""}" in ${args.path ?? "."}`
-                    : toolName === "Find"
-                      ? `📂 Find: "${args.name ?? ""}"`
-                      : toolName === "Tree"
-                        ? `🌲 Tree: ${args.path ?? "."}`
-                        : toolName === "Inspect"
-                          ? `🔬 Inspecting: ${args.target ?? "project"}`
-                          : toolName === "ToolSearch"
-                            ? `🔎 Searching Tools: "${args.query ?? ""}"`
-                            : toolName === "ToolsAvailable"
-                              ? `🧰 Available Tools`
-                              : toolName === "ExtractSymbols"
-                                ? `📑 Extracting Symbols: ${filePath}`
-                                : toolName === "SummarizeFile"
-                                  ? `🗜️ Summarizing File: ${filePath}`
-                                  : toolName === "ContextExtract"
-                                    ? `🎯 Context Window: ${filePath} (around "${args.query ?? ""}")`
-                                    : toolName === "SummarizeDiff"
-                                      ? `📊 Summarizing Diff: ${args.file_path ?? "all"}`
-                                      : toolName === "CausalAnalyze"
-                                        ? `🔬 Causal Analysis: "${args.query ?? ""}"`
-                                        : toolName === "DeadCodeScan"
-                                          ? `🧹 Scanning Dead Code & Project Entropy`
-                                          : toolName === "WebSearch"
-                                            ? `🌐 Searching: "${args.query ?? ""}"`
-                                          : toolName === "LSP_Definition"
-                                            ? `🔍 LSP Definition: ${args.symbol ?? filePath}`
-                                            : toolName === "LSP_References"
-                                              ? `🔎 LSP References: ${args.symbol ?? filePath}`
-                                              : toolName === "LSP_DocumentSymbols"
-                                                ? `📑 LSP Symbols: ${filePath}`
-                                                : toolName === "LSP_Hover"
-                                                  ? `ℹ️ LSP Hover: ${args.symbol ?? filePath}`
-                                                  : isMcp && mcpMatch
-                                                    ? `🔌 MCP: ${mcpMatch.localName}`
-                                                    : `⚡ Running: ${args.command ?? ""}`;
-
-        // Target resource for permission evaluation
-        const target =
-          toolName === "Bash"
-            ? String(args.command ?? "")
-            : toolName === "WebSearch"
-              ? String(args.query ?? "")
-              : toolName === "Glob"
-                ? String(args.pattern ?? "")
-                : toolName === "Grep"
-                  ? String(args.query ?? "")
-                  : toolName === "Find"
-                    ? String(args.name ?? "")
-                    : toolName === "Tree"
-                      ? String(args.path ?? ".")
-                      : toolName === "Inspect"
-                        ? String(args.target ?? "project")
-                        : toolName === "ToolSearch"
-                          ? String(args.query ?? "")
-                          : toolName === "ToolsAvailable"
-                            ? String(args.category ?? "all")
-                            : toolName === "ExtractSymbols" ||
-                                toolName === "SummarizeFile" ||
-                                toolName === "ContextExtract"
-                              ? filePath
-                              : toolName === "SummarizeDiff"
-                                ? String(args.file_path ?? "diff")
-                                : toolName === "CausalAnalyze"
-                                  ? String(args.query ?? "causal")
-                                  : toolName === "DeadCodeScan"
-                                    ? String(args.path ?? "workspace")
-                                    : toolName.startsWith("LSP_")
-                                      ? String(args.symbol ?? filePath)
-                                      : isMcp && mcpMatch
-                                        ? mcpMatch.localName
-                                        : filePath;
+        const summary = formatToolSummary(toolName, args, filePath, mcpMatch);
+        const target = extractToolTarget(toolName, args, filePath, mcpMatch);
 
         // Evaluate permissions
         const { action, rule } = evaluatePermission(
@@ -1612,6 +1674,8 @@ Use tools to answer requests:
           );
           result = `Error: Permission denied by policy for ${toolName}: "${target}". ${rule?.description ? `Reason: ${rule.description}` : ""}`;
         } else if (action === "ask") {
+          // Lifecycle State Machine: WAITING
+          stateMachine.transitionTo("WAITING", { sessionId, toolName, target });
           const allowed = await promptUserPermission(
             toolName,
             summary,
@@ -1677,6 +1741,9 @@ Use tools to answer requests:
 
         // Notify tool call if allowed
         if (!result) {
+          // Lifecycle State Machine: EXECUTING
+          stateMachine.transitionTo("EXECUTING", { sessionId, toolName, target, args });
+
           eventBus.emit({
             type: "tool.started",
             sessionId,
@@ -1939,8 +2006,21 @@ Use tools to answer requests:
           hooksConfig,
         );
 
+        // Lifecycle State Machine: VERIFYING
+        stateMachine.transitionTo("VERIFYING", {
+          sessionId,
+          toolName,
+          isError,
+          outputLength: result?.length ?? 0,
+        });
+
         // Record tool result
-        const sanitizedResult = sanitizeSecrets(result ?? "");
+        let sanitizedResult = sanitizeSecrets(result ?? "");
+        if (sanitizedResult.length > 3000) {
+          sanitizedResult =
+            sanitizedResult.slice(0, 3000) +
+            `\n... [Truncated ${sanitizedResult.length - 3000} characters to conserve context budget. Use ContextExtract to read specific sections.]`;
+        }
         const toolMsg = {
           role: "tool",
           tool_call_id: tc.id,
@@ -2006,7 +2086,16 @@ Use tools to answer requests:
       actionLog.length > 0
         ? `✅ Completed (turn limit reached):\n${actionLog.map((a) => `  • ${a}`).join("\n")}`
         : "⚠️ Turn limit reached without a final answer.";
-    return limitMsg;
+
+    const resCtx = await middlewarePipeline.executeAfterResponse({
+      sessionId,
+      rawResponse: limitMsg,
+      cleanedResponse: limitMsg,
+      model,
+      turns,
+      metadata: reqCtx.metadata,
+    });
+    return resCtx.cleanedResponse;
   } finally {
     // Emit session.ended event
     eventBus.emit({
@@ -2032,5 +2121,8 @@ Use tools to answer requests:
     // Cleanup MCP clients and LSP servers
     for (const c of mcpClients.values()) c.close();
     lspService.closeAll();
+
+    // Lifecycle State Machine: IDLE
+    stateMachine.transitionTo("IDLE", { sessionId });
   }
 }
