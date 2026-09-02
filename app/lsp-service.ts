@@ -42,23 +42,6 @@ export type SymbolOutlineItem = {
   preview: string;
 };
 
-// Find line & character of a symbol in a file
-export function findSymbolPosition(
-  filePath: string,
-  symbol: string,
-): { line: number; character: number } | null {
-  if (!fs.existsSync(filePath)) return null;
-  const lines = fs.readFileSync(filePath, "utf-8").split("\n");
-
-  for (let i = 0; i < lines.length; i++) {
-    const col = lines[i].indexOf(symbol);
-    if (col !== -1) {
-      return { line: i, character: col };
-    }
-  }
-  return null;
-}
-
 // Fallback Symbol Extractor using Regex Parser
 export function extractStaticDocumentSymbols(filePath: string): SymbolOutlineItem[] {
   if (!fs.existsSync(filePath)) return [];

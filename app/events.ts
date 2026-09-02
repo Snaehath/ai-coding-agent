@@ -113,9 +113,6 @@ export type AgentEvent =
       timestamp: string;
     };
 
-export type AgentEventType = AgentEvent["type"];
-export type AgentEventListener<T extends AgentEvent = AgentEvent> = (event: T) => void;
-
 // Singleton Event Bus for all subsystems (TUI, Telemetry, VS Code, Web UI, Hooks)
 class AgentEventBus {
   private emitter = new EventEmitter();

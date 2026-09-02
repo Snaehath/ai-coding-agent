@@ -49,6 +49,7 @@ import {
   compressHistory,
 } from "./context-engine.ts";
 import { executeCausalAnalyze } from "./causal-graph.ts";
+import { renderEntropyReport } from "./entropy.ts";
 
 // Constants
 const PLACEHOLDER_RE =
@@ -74,10 +75,10 @@ const colors = {
 };
 
 // Types
-export type ExecutionMode = "cli" | "server" | "repl";
+type ExecutionMode = "cli" | "server" | "repl";
 
 // Path resolution
-export function resolveFilePath(raw: any): string {
+function resolveFilePath(raw: any): string {
   if (!raw) return "";
 
   let filePath: string =
@@ -94,7 +95,7 @@ export function resolveFilePath(raw: any): string {
 }
 
 // Parse tool arguments safely
-export function parseToolArguments(raw: any): Record<string, any> {
+function parseToolArguments(raw: any): Record<string, any> {
   if (!raw) return {};
   if (typeof raw === "object") return raw;
   if (typeof raw === "string") {
@@ -158,6 +159,7 @@ export function extractEmbeddedToolCall(
     "ContextExtract",
     "SummarizeDiff",
     "CausalAnalyze",
+    "DeadCodeScan",
     "Bash",
     "WebSearch",
     "LSP_Definition",
@@ -285,7 +287,7 @@ export function extractEmbeddedToolCall(
 }
 
 // Strip tool call artifacts and tags from content
-export function cleanAssistantContent(raw: string): string {
+function cleanAssistantContent(raw: string): string {
   if (!raw) return "";
 
   let clean = raw.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
@@ -330,7 +332,7 @@ export function cleanAssistantContent(raw: string): string {
 }
 
 // Built-in tools
-export const BUILTIN_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
+const BUILTIN_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
@@ -845,6 +847,24 @@ export const BUILTIN_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "DeadCodeScan",
+      description:
+        "Project Garbage Collector & Codebase Entropy Engine. Discovers unused dependencies in package.json, dead/orphan exports, orphaned source files, stale environment variables, and calculates overall project entropy percentage with actionable cleanups.",
+      parameters: {
+        type: "object",
+        properties: {
+          path: {
+            type: "string",
+            description:
+              "Optional project root directory path to analyze (defaults to workspace).",
+          },
+        },
+      },
+    },
+  },
 ];
 
 // Initialize tool catalog with core and specialized tools
@@ -862,6 +882,7 @@ function setupToolRegistry(mcpTools: McpToolSchema[] = []) {
     "ContextExtract",
     "SummarizeDiff",
     "CausalAnalyze",
+    "DeadCodeScan",
     "Bash",
     "ToolSearch",
     "ToolsAvailable",
@@ -874,7 +895,8 @@ function setupToolRegistry(mcpTools: McpToolSchema[] = []) {
       category = "filesystem";
     else if (["ExtractSymbols", "SummarizeFile", "ContextExtract", "SummarizeDiff"].includes(name))
       category = "compression";
-    else if (name === "CausalAnalyze") category = "analysis";
+    else if (["CausalAnalyze", "DeadCodeScan"].includes(name))
+      category = "analysis";
     else if (name === "Bash") category = "terminal";
     else if (name === "Inspect") category = "introspection";
     else if (name.startsWith("LSP_")) category = "navigation";
@@ -927,7 +949,7 @@ async function loadMcpClients(): Promise<Map<string, McpClient>> {
 }
 
 // Convert local image file to base64 Data URL
-export function encodeLocalImageToDataUrl(filePath: string): string | null {
+function encodeLocalImageToDataUrl(filePath: string): string | null {
   try {
     const cleanPath = filePath.replace(/^['"]|['"]$/g, "").trim();
     const resolved = path.resolve(process.cwd(), cleanPath);
@@ -1013,6 +1035,7 @@ export async function runAgentMode(
     "ContextExtract",
     "SummarizeDiff",
     "CausalAnalyze",
+    "DeadCodeScan",
     "Bash",
     "WebSearch",
     ...allTools.map((t) => t.function.name),
@@ -1051,6 +1074,8 @@ Use tools to answer requests:
     • inspect("directory", path): Subdirectory count, file counts, and extension breakdown.
     • inspect("process"): PID, memory usage (RSS/heap), uptime, and architecture.
     • inspect("config"): Active model, permission policies, hooks, and skills.
+- Project Garbage Collector & Dead Code Scanner:
+  - DeadCodeScan: Scans codebase for unused dependencies in package.json, dead/orphan exports, orphaned files, stale environment variables, and calculates project entropy percentage with actionable cleanups.
 - Autonomous Root-Cause & Causal Analysis:
   - CausalAnalyze: Constructs multi-step cause ➔ effect failure chains (e.g. slow DB ➔ pool saturation ➔ timeouts ➔ retry storm ➔ cascade failure) with actionable mitigations for complex bugs or performance degradations.
 - Context Compression & Low-VRAM Efficiency:
@@ -1511,19 +1536,21 @@ Use tools to answer requests:
                                       ? `📊 Summarizing Diff: ${args.file_path ?? "all"}`
                                       : toolName === "CausalAnalyze"
                                         ? `🔬 Causal Analysis: "${args.query ?? ""}"`
-                                        : toolName === "WebSearch"
-                                          ? `🌐 Searching: "${args.query ?? ""}"`
-                                        : toolName === "LSP_Definition"
-                                          ? `🔍 LSP Definition: ${args.symbol ?? filePath}`
-                                          : toolName === "LSP_References"
-                                            ? `🔎 LSP References: ${args.symbol ?? filePath}`
-                                            : toolName === "LSP_DocumentSymbols"
-                                              ? `📑 LSP Symbols: ${filePath}`
-                                              : toolName === "LSP_Hover"
-                                                ? `ℹ️ LSP Hover: ${args.symbol ?? filePath}`
-                                                : isMcp && mcpMatch
-                                                  ? `🔌 MCP: ${mcpMatch.localName}`
-                                                  : `⚡ Running: ${args.command ?? ""}`;
+                                        : toolName === "DeadCodeScan"
+                                          ? `🧹 Scanning Dead Code & Project Entropy`
+                                          : toolName === "WebSearch"
+                                            ? `🌐 Searching: "${args.query ?? ""}"`
+                                          : toolName === "LSP_Definition"
+                                            ? `🔍 LSP Definition: ${args.symbol ?? filePath}`
+                                            : toolName === "LSP_References"
+                                              ? `🔎 LSP References: ${args.symbol ?? filePath}`
+                                              : toolName === "LSP_DocumentSymbols"
+                                                ? `📑 LSP Symbols: ${filePath}`
+                                                : toolName === "LSP_Hover"
+                                                  ? `ℹ️ LSP Hover: ${args.symbol ?? filePath}`
+                                                  : isMcp && mcpMatch
+                                                    ? `🔌 MCP: ${mcpMatch.localName}`
+                                                    : `⚡ Running: ${args.command ?? ""}`;
 
         // Target resource for permission evaluation
         const target =
@@ -1553,11 +1580,13 @@ Use tools to answer requests:
                                 ? String(args.file_path ?? "diff")
                                 : toolName === "CausalAnalyze"
                                   ? String(args.query ?? "causal")
-                                  : toolName.startsWith("LSP_")
-                                    ? String(args.symbol ?? filePath)
-                                    : isMcp && mcpMatch
-                                      ? mcpMatch.localName
-                                      : filePath;
+                                  : toolName === "DeadCodeScan"
+                                    ? String(args.path ?? "workspace")
+                                    : toolName.startsWith("LSP_")
+                                      ? String(args.symbol ?? filePath)
+                                      : isMcp && mcpMatch
+                                        ? mcpMatch.localName
+                                        : filePath;
 
         // Evaluate permissions
         const { action, rule } = evaluatePermission(
@@ -1766,6 +1795,9 @@ Use tools to answer requests:
           result = executeCausalAnalyze(String(args.query ?? ""), args.context);
           if (!result.startsWith("Error:"))
             actionLog.push(`CausalAnalyze: ${args.query}`);
+        } else if (toolName === "DeadCodeScan") {
+          result = renderEntropyReport(args.path ? resolveFilePath(args.path) : process.cwd());
+          if (!result.startsWith("Error:")) actionLog.push(`DeadCodeScan`);
         } else if (toolName === "Bash") {
           let command = args.command ?? "";
           if (typeof command === "object" && command !== null) {

@@ -40,16 +40,16 @@
   - **`network()` & `runtime()`**: Active network interfaces, local IP, runtime (Bun/Node.js), process PID, and memory RSS.
   - **Hardware-Aware Model Orchestrator**: Automatically recommends and switches to the optimal local model based on real-time VRAM/RAM constraints (e.g. recommending `granite` or `gemma` for 4GB VRAM).
 
-### 🔬 6. Causal Failure & Root-Cause Graph Analyzer (`CausalAnalyze`)
-- Different from standard dependency graphs (`A → B → C`), the causal graph constructs multi-layer failure cascades:
-  ```text
-  slow DB ➔ pool saturation ➔ request timeouts ➔ retry storm ➔ cascade failure
-  ```
-- **Capabilities**:
-  - Automatically identifies the true root cause, propagation pathways across layers (`infrastructure`, `database`, `network`, `application`), and the observable symptom.
-  - Generates visual ASCII causal flow charts with specific prevention and remediation steps.
+### 🧹 7. Project Garbage Collector & Codebase Entropy Engine (`/entropy` & `DeadCodeScan`)
+- A dedicated cleaner organ that discovers everything nobody uses anymore:
+  - **Unused Dependencies**: Scans `package.json` against all project imports.
+  - **Dead / Orphan Exports**: Pinpoints exported functions, types, and constants with 0 consumers outside their declaring file.
+  - **Orphaned Source Files**: Finds code files that are never imported anywhere.
+  - **Stale Environment Variables**: Identifies `.env` keys never referenced in code.
+  - **Project Entropy Score**: Calculates overall codebase entropy percentage (e.g. `12% [🟢 Clean]`) with actionable cleanup instructions.
+  - **REPL Slash Command**: Type `/entropy` or `/gc` in the interactive terminal for an instant codebase health audit.
 
-### 🗜️ 7. Context Compression & Low-VRAM Summarization Engine
+### 🗜️ 8. Context Compression & Low-VRAM Summarization Engine
 - Tailored for low-memory local models (3B / 7B / 8B) and tight 4GB VRAM limits so the model never overflows context or chokes on massive 10,000-line files:
   - **`extract_symbols(filePath)`**: Extracts all function signatures, classes, interfaces, and types from a file without keeping the internal bodies (up to **95% token savings**).
   - **`summarize_file(filePath)`**: Generates a high-level compressed skeleton, dependencies, and structural outline.

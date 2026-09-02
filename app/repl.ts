@@ -27,6 +27,7 @@ import {
   renderTerminalMarkdown,
 } from "./markdown.ts";
 import { renderModelBanner } from "./banners.ts";
+import { renderEntropyReport } from "./entropy.ts";
 
 // ANSI terminal colors
 export const colors = {
@@ -206,6 +207,7 @@ export async function runReplMode(options: {
               `\n  ${colors.boldYellow("/skills")}           List available skills` +
               `\n  ${colors.boldYellow("/permissions")}      List active permission policies` +
               `\n  ${colors.boldYellow("/hooks")}            List active lifecycle hooks` +
+              `\n  ${colors.boldYellow("/entropy")} | ${colors.boldYellow("/gc")}   Scan for dead code, unused deps & project entropy` +
               `\n  ${colors.boldYellow("/stats")}            View real-time agent telemetry & metrics` +
               `\n  ${colors.boldYellow("/clear")} | ${colors.boldYellow("/new")}     Start a fresh session` +
               `\n  ${colors.boldYellow("/sessions")} | ${colors.boldYellow("/list")} List saved sessions` +
@@ -456,6 +458,17 @@ export async function runReplMode(options: {
             sessionStartTime,
           );
           console.log("\n" + formatTelemetryBox(summary) + "\n");
+          break;
+        }
+
+        case "/entropy":
+        case "/gc":
+        case "/dead-code": {
+          console.log(
+            colors.dim("\n  🔍 Running Project Garbage Collector & Entropy Scan..."),
+          );
+          const report = renderEntropyReport();
+          console.log("\n" + report + "\n");
           break;
         }
 
