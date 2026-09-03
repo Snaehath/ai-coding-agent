@@ -393,7 +393,7 @@ export async function runAgentMode(
     apiKey,
     baseURL: process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1",
   });
-  const model = process.env.MODEL ?? "qwen2.5-coder:7b-instruct-q3_k_m";
+  const model = process.env.MODEL ?? "granite4.2:3b";
   const modelInfo = resolveModel(model);
   const agentName =
     modelInfo.name || process.env.AGENT_NAME || "an expert coding assistant";

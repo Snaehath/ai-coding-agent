@@ -171,7 +171,7 @@
 ### 1. Prerequisites
 - **[Bun Runtime](https://bun.sh/)** (v1.1+ recommended)
 - **[Ollama](https://ollama.ai/)** running locally on `http://localhost:11434`
-- Pulled local models (e.g. `ollama pull ibm/granite4.2:3b`, `ollama pull qwen2.5-coder:7b-instruct-q3_k_m`)
+- Pulled local models (e.g. `ollama pull granite4.2:3b`, `ollama pull ministral-3:3b`, `ollama pull lfm2.5:8b`)
 
 ### 2. Setup
 Clone the repository and install dependencies:
@@ -185,7 +185,7 @@ Configure environment variables in `.env`:
 ```env
 OPENROUTER_API_KEY="ollama"
 OPENROUTER_BASE_URL="http://localhost:11434/v1"
-MODEL="qwen2.5-coder:7b-instruct-q3_k_m"
+MODEL="granite4.2:3b"
 ```
 
 ---

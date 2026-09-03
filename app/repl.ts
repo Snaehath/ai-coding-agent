@@ -272,6 +272,7 @@ export async function runReplMode(options: {
           break;
         }
 
+        case "/models":
         case "/model": {
           const rawArg = rest[0];
           if (rawArg) {

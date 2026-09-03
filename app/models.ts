@@ -44,14 +44,14 @@ const FALLBACK_MODELS: ModelInfo[] = [
     vramUsage: "~2.2 GB VRAM",
   },
   {
-    id: "qwen2.5-coder:7b-instruct-q3_k_m",
-    name: "Qwen 2.5 Coder 7B Instruct",
-    creator: "Alibaba Qwen",
+    id: "ministral-3:3b",
+    name: "Mistral Ministral 3 3B",
+    creator: "Mistral AI",
     license: "Apache 2.0",
-    aliases: ["qwen", "qwen2.5", "qwen2.5coder", "qwencoder", "qwen-coder", "coder"],
-    description: "Code-specialized 7B instruction model designed for deep code synthesis and refactoring.",
-    capabilities: ["Deep Code Synthesis", "Debugging", "Refactoring", "Code Translation"],
-    vramUsage: "~3.8 GB VRAM",
+    aliases: ["ministral", "ministral3", "ministral-3:3b"],
+    description: "High-speed instruction model optimized for fast tool execution and concise reasoning.",
+    capabilities: ["Tool Use", "Speed", "Reasoning", "Instruction Following"],
+    vramUsage: "~2.0 GB VRAM",
   },
 ];
 
@@ -92,7 +92,7 @@ export function loadRegisteredModels(): ModelInfo[] {
 export const REGISTERED_MODELS: ModelInfo[] = loadRegisteredModels();
 
 // Fallback default model ID
-export const DEFAULT_MODEL_ID = "qwen2.5-coder:7b-instruct-q3_k_m";
+export const DEFAULT_MODEL_ID = "granite4.2:3b";
 
 // Resolve model alias or return custom model info
 export function resolveModel(input: string): ModelInfo {
