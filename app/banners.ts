@@ -40,34 +40,22 @@ export function renderModelBanner(modelId: string): string {
     ].join("\n");
   }
 
-  // 2. Qwen 2.5 Coder (Cyber Terminal / Isometric Code Block)
-  if (m.includes("qwen2.5-coder") || (m.includes("coder") && !m.includes("3.5"))) {
-    return [
-      "",
-      `    ${c.boldGreen("     ┌───────┐")}   `,
-      `    ${c.boldGreen("    / █ █ █ /│")}    ${c.boldCyan("QWEN 2.5 CODER")} ${c.dim("· 7B Instruct")}`,
-      `    ${c.green("   /───────/ │")}    ${c.gray("Deep Code Synthesis & Refactoring Engine")}`,
-      `    ${c.green("   │ < / > │ │")}    ${c.dim("Capabilities:")} ${c.boldGreen("Code Search")} · ${c.cyan("Refactor")} · ${c.yellow("Debug")}`,
-      `    ${c.boldCyan("   │  CODE │ /")}    ${c.dim("Context:")} ${c.boldWhite("64k tokens")} · ${c.dim("Status:")} ${c.boldGreen("● Active")}`,
-      `    ${c.boldCyan("   └───────┘/")}   `,
-      "",
-    ].join("\n");
-  }
-
-  // 3. Gemma 3 Tools (Google DeepMind 4-Point Prism Star)
+  // 2. Gemma 3 Tools (Google DeepMind - Thin Wireframe Gemini Spark Star)
   if (m.includes("gemma")) {
     return [
       "",
-      `    ${c.boldMagenta("        ▲")}        `,
-      `    ${c.boldMagenta("      ◄ ◆ ►")}       ${c.boldYellow("GEMMA 3 TOOLS")} ${c.dim("· 4B")}`,
-      `    ${c.magenta("        ▼")}         ${c.gray("Multimodal Vision & Function Calling Engine")}`,
-      `    ${c.cyan("       / \\")}        ${c.dim("Capabilities:")} ${c.boldMagenta("Vision / Image")} · ${c.yellow("Function Calling")}`,
-      `    ${c.cyan("      /   \\")}       ${c.dim("Context:")} ${c.boldWhite("64k tokens")} · ${c.dim("Status:")} ${c.boldGreen("● Active")}`,
+      `    ${c.boldBlue("          ▲")}`,
+      `    ${c.boldBlue("         ╱ ╲")}        ${c.boldMagenta("GEMMA 3 TOOLS")} ${c.dim("· 4B")}`,
+      `    ${c.boldCyan("       ╭╯   ╰╮")}      ${c.gray("Google DeepMind Multimodal & Tool Engine")}`,
+      `    ${c.boldCyan("     ◄─┤  ")}${c.boldYellow("✦")}${c.boldCyan("  ├─►")}    ${c.dim("Capabilities:")} ${c.boldMagenta("Vision / Image")} · ${c.boldYellow("Function Calling")}`,
+      `    ${c.boldMagenta("       ╰╮   ╭╯")}      ${c.dim("Context:")} ${c.boldWhite("64k tokens")} · ${c.dim("Status:")} ${c.boldGreen("● Active")}`,
+      `    ${c.boldMagenta("         ╲ ╱")}`,
+      `    ${c.boldBlue("          ▼")}`,
       "",
     ].join("\n");
   }
 
-  // 4. Mistral Ministral 3 (Iconic Layered Flame / Edge Core)
+  // 3. Mistral Ministral 3 (Iconic Layered Flame / Edge Core)
   if (m.includes("ministral") || m.includes("mistral")) {
     return [
       "",
@@ -80,28 +68,31 @@ export function renderModelBanner(modelId: string): string {
     ].join("\n");
   }
 
-  // 5. Liquid LFM 2.5 (Dynamic State-Space Liquid Waves)
+  // 4. Liquid LFM 2.5 (Liquid AI - Thin Wireframe Fluid Teardrop)
   if (m.includes("lfm") || m.includes("liquid")) {
     return [
       "",
-      `    ${c.boldCyan("     ╭───────╮")}   `,
-      `    ${c.boldMagenta("    ╱  ~ ~ ~  ╲")}   ${c.boldCyan("LIQUID LFM 2.5")} ${c.dim("· 8B A1B")}`,
-      `    ${c.magenta("   │  ≈ ≈ ≈ ≈  │")}  ${c.gray("Dynamical State-Space Neural Architecture")}`,
-      `    ${c.boldCyan("    ╲  ~ ~ ~  ╱")}   ${c.dim("Capabilities:")} ${c.magenta("Low-Latency")} · ${c.cyan("Long Context")} · ${c.green("Tools")}`,
-      `    ${c.cyan("     ╰───────╯")}    ${c.dim("Context:")} ${c.boldWhite("64k tokens")} · ${c.dim("Status:")} ${c.boldGreen("● Active")}`,
+      `    ${c.boldCyan("          ▲")}`,
+      `    ${c.boldCyan("         ╱ ╲")}        ${c.boldCyan("LIQUID LFM 2.5")} ${c.dim("· 8B A1B")}`,
+      `    ${c.boldMagenta("       ╭╯   ╰╮")}      ${c.gray("Liquid State-Space Neural Dynamical Engine")}`,
+      `    ${c.boldMagenta("      │   ~   │")}     ${c.dim("Capabilities:")} ${c.magenta("Low-Latency")} · ${c.cyan("Long Context")} · ${c.green("Tools")}`,
+      `    ${c.cyan("      │  ≈ ≈  │")}     ${c.dim("Context:")} ${c.boldWhite("64k tokens")} · ${c.dim("Status:")} ${c.boldGreen("● Active")}`,
+      `    ${c.cyan("       ╰╮   ╭╯")}`,
+      `    ${c.boldCyan("         ╰─╯")}`,
       "",
     ].join("\n");
   }
 
-  // 6. Qwen 3.5 (Multimodal Vision & Thinking Reasoner)
-  if (m.includes("qwen3.5") || m.includes("qwen-3.5")) {
+  // 5. Qwen 3.5 (Alibaba Qwen - Thin Wireframe Geometric "Q")
+  if (m.includes("qwen3.5") || m.includes("qwen-3.5") || m.includes("qwen")) {
     return [
       "",
-      `    ${c.boldGreen("      ╭─━━━━─╮")}   `,
-      `    ${c.boldCyan("     ╱  ◉  ◉  ╲")}   ${c.boldGreen("QWEN 3.5")} ${c.dim("· 4B")}`,
-      `    ${c.cyan("    │    ▲     │")}  ${c.gray("Multimodal Vision & Deep Thinking Reasoner")}`,
-      `    ${c.boldGreen("     ╲  ╰─╯   ╱")}   ${c.dim("Capabilities:")} ${c.boldCyan("Vision / OCR")} · ${c.yellow("Chain-of-Thought")} · ${c.green("Coding")}`,
-      `    ${c.green("      ╰─━━━━─╯")}    ${c.dim("Context:")} ${c.boldWhite("64k tokens")} · ${c.dim("Status:")} ${c.boldGreen("● Active")}`,
+      `    ${c.boldGreen("        ╭───────╮")}`,
+      `    ${c.boldGreen("       ╱  ╭───╮  ╲")}     ${c.boldGreen("QWEN 3.5")} ${c.dim("· 4B")}`,
+      `    ${c.boldCyan("      │   │   │   │")}    ${c.gray("Alibaba Qwen Multimodal & Deep Thinking Engine")}`,
+      `    ${c.boldCyan("      │   │   │   │")}    ${c.dim("Capabilities:")} ${c.boldCyan("Vision / OCR")} · ${c.yellow("Chain-of-Thought")} · ${c.green("Coding")}`,
+      `    ${c.green("       ╲  ╰───┼╮ ╱")}     ${c.dim("Context:")} ${c.boldWhite("64k tokens")} · ${c.dim("Status:")} ${c.boldGreen("● Active")}`,
+      `    ${c.green("        ╰─────┴╯─")}`,
       "",
     ].join("\n");
   }
