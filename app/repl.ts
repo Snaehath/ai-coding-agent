@@ -31,6 +31,7 @@ import { renderEntropyReport } from "./entropy.ts";
 import { middlewarePipeline } from "./middleware.ts";
 import { stateMachine } from "./state-machine.ts";
 import { evaluatorEngine } from "./evaluators.ts";
+import { dbManager } from "./connectors/db-manager.ts";
 
 // ANSI terminal colors
 export const colors = {
@@ -109,6 +110,16 @@ export async function runReplMode(options: {
       colors.green(sessionId()) +
       colors.dim(` (${history.length} msgs)`),
   );
+
+  // Auto-connect to active database profile if available
+  const autoDb = await dbManager.autoConnect();
+  if (autoDb && autoDb.ok) {
+    console.log(
+      colors.dim("  Database: ") +
+        colors.cyan(`${autoDb.engine.toUpperCase()} (${autoDb.database || "connected"}, ${autoDb.tableCount} tables)`),
+    );
+  }
+
   console.log(renderModelBanner(currentModel()));
 
   const rl = readline.createInterface({
@@ -213,6 +224,7 @@ export async function runReplMode(options: {
               `\n  ${colors.boldYellow("/middleware")}       List active request/response interceptors` +
               `\n  ${colors.boldYellow("/state")}            View agent lifecycle state machine & history` +
               `\n  ${colors.boldYellow("/eval")} | ${colors.boldYellow("/judge")}   Evaluate & score latest response quality` +
+              `\n  ${colors.boldYellow("/db [cmd]")}          Database connector (connect, test, tables, schema, use)` +
               `\n  ${colors.boldYellow("/entropy")} | ${colors.boldYellow("/gc")}   Scan for dead code, unused deps & project entropy` +
               `\n  ${colors.boldYellow("/stats")}            View real-time agent telemetry & metrics` +
               `\n  ${colors.boldYellow("/clear")} | ${colors.boldYellow("/new")}     Start a fresh session` +
@@ -395,6 +407,184 @@ export async function runReplMode(options: {
             ),
           );
           break;
+
+        case "/db":
+        case "/database": {
+          const sub = (rest[0] || "").toLowerCase().trim();
+          const target = rest.slice(1).join(" ").trim();
+
+          if (!sub || sub === "status") {
+            const active = dbManager.getActiveInfo();
+            const config = dbManager.loadConfig();
+            console.log("\n" + colors.bold("Database Connector Status:"));
+            console.log(colors.gray("─".repeat(68)));
+            if (active && active.ok) {
+              console.log(
+                `  • Status   : ${colors.boldGreen("CONNECTED")}` +
+                `\n  • Engine   : ${colors.cyan(active.version || active.engine.toUpperCase())}` +
+                `\n  • Database : ${colors.bold(active.database || "default")}` +
+                `\n  • Latency  : ${colors.yellow(`${active.latencyMs}ms`)}` +
+                `\n  • Tables   : ${active.tableCount} table(s)` +
+                `\n  • Target   : ${colors.dim(dbManager.getActiveUrl().replace(/:([^@/]+)@/, ":****@"))}`
+              );
+            } else {
+              console.log(`  • Status   : ${colors.yellow("DISCONNECTED")}`);
+              if (config.active) {
+                console.log(`  • Default  : Profile '${config.active}' (type '/db use ${config.active}' to connect)`);
+              }
+            }
+
+            console.log(
+              `\n${colors.bold("Available Subcommands:")}` +
+              `\n  ${colors.boldYellow("/db connect <url|path>")}  Connect to PostgreSQL, MySQL, or SQLite` +
+              `\n  ${colors.boldYellow("/db test")}                Test connection health & latency` +
+              `\n  ${colors.boldYellow("/db tables")}              List available tables with row counts` +
+              `\n  ${colors.boldYellow("/db schema [table]")}     Inspect table columns or full schema` +
+              `\n  ${colors.boldYellow("/db save <name> <url>")}   Save named connection profile` +
+              `\n  ${colors.boldYellow("/db use <name>")}          Switch to saved profile` +
+              `\n  ${colors.boldYellow("/db profiles")}            List all saved connection profiles` +
+              `\n  ${colors.boldYellow("/db disconnect")}          Disconnect active database\n`
+            );
+            break;
+          }
+
+          if (sub === "connect") {
+            if (!target) {
+              console.log(colors.red("\nUsage: /db connect <postgresql://... | mysql://... | ./local.db>\n"));
+              break;
+            }
+            console.log(colors.dim(`\n  ⚡ Testing connection to database...`));
+            const res = await dbManager.connect(target);
+            console.log("\n" + dbManager.formatConnectionCard(res, target) + "\n");
+            break;
+          }
+
+          if (sub === "test") {
+            const adapter = dbManager.getActiveAdapter();
+            if (!adapter) {
+              console.log(colors.yellow("\n⚠️ No active database connection. Connect using '/db connect <url>'\n"));
+              break;
+            }
+            console.log(colors.dim(`\n  ⚡ Testing database latency & health...`));
+            const test = await adapter.testConnection();
+            if (test.ok) {
+              console.log(colors.green(`\n✅ Database is healthy (${test.latencyMs}ms) · ${test.tableCount} table(s) accessible.\n`));
+            } else {
+              console.log(colors.red(`\n❌ Health check failed: ${test.error} (${test.latencyMs}ms)\n`));
+            }
+            break;
+          }
+
+          if (sub === "tables" || sub === "list") {
+            const adapter = dbManager.getActiveAdapter();
+            if (!adapter) {
+              console.log(colors.yellow("\n⚠️ No active database connection. Connect using '/db connect <url>'\n"));
+              break;
+            }
+            try {
+              const tables = await adapter.listTables();
+              console.log(`\n${colors.bold(`Available Tables (${tables.length} total):`)}`);
+              console.log(colors.gray("─".repeat(68)));
+              for (const t of tables) {
+                const rows =
+                  t.approxRows !== undefined
+                    ? colors.dim(t.isExactRows ? ` (${t.approxRows} rows)` : ` (~${t.approxRows} rows)`)
+                    : "";
+                console.log(`  • 📄 ${colors.boldCyan(t.name)}${rows} ${colors.gray(`[${t.type}]`)}`);
+              }
+              console.log();
+            } catch (err: any) {
+              console.log(colors.red(`\n❌ Error fetching tables: ${err.message}\n`));
+            }
+            break;
+          }
+
+          if (sub === "schema") {
+            const adapter = dbManager.getActiveAdapter();
+            if (!adapter) {
+              console.log(colors.yellow("\n⚠️ No active database connection. Connect using '/db connect <url>'\n"));
+              break;
+            }
+            try {
+              if (target) {
+                const cols = await adapter.describeTable(target);
+                console.log(`\n${colors.bold(`Table Schema: ${target} (${cols.length} columns):`)}`);
+                console.log(colors.gray("─".repeat(68)));
+                for (const c of cols) {
+                  const pk = c.isPrimaryKey ? colors.boldYellow(" [PRIMARY KEY]") : "";
+                  const nullStr = c.nullable ? colors.dim("NULL") : colors.bold("NOT NULL");
+                  const def = c.defaultValue ? colors.gray(` DEFAULT ${c.defaultValue}`) : "";
+                  console.log(`  • ${colors.boldCyan(c.name)}: ${c.type} (${nullStr}${pk}${def})`);
+                }
+                console.log();
+              } else {
+                const fullSchema = await adapter.getSchema();
+                console.log("\n" + fullSchema + "\n");
+              }
+            } catch (err: any) {
+              console.log(colors.red(`\n❌ Error fetching schema: ${err.message}\n`));
+            }
+            break;
+          }
+
+          if (sub === "disconnect") {
+            await dbManager.disconnect();
+            console.log(colors.green("\n🔌 Database disconnected successfully.\n"));
+            break;
+          }
+
+          if (sub === "save") {
+            const [pName, pUrl] = target.split(/\s+/, 2);
+            if (!pName || !pUrl) {
+              console.log(colors.red("\nUsage: /db save <profile_name> <connection_url>\n"));
+              break;
+            }
+            dbManager.saveProfile(pName, pUrl);
+            console.log(colors.green(`\n✅ Saved profile '${pName}' in .agents/connections.json\n`));
+            break;
+          }
+
+          if (sub === "use" || sub === "switch") {
+            if (!target) {
+              console.log(colors.red("\nUsage: /db use <profile_name>\n"));
+              break;
+            }
+            console.log(colors.dim(`\n  ⚡ Connecting to profile '${target}'...`));
+            const res = await dbManager.useProfile(target);
+            if (res.ok) {
+              const cfg = dbManager.loadConfig();
+              const url = cfg.connections[target]?.url || target;
+              console.log("\n" + dbManager.formatConnectionCard(res, url) + "\n");
+            } else {
+              console.log(colors.red(`\n❌ Connection failed: ${res.error}\n`));
+            }
+            break;
+          }
+
+          if (sub === "profiles") {
+            const cfg = dbManager.loadConfig();
+            const entries = Object.entries(cfg.connections);
+            console.log("\n" + colors.bold("Saved Connection Profiles:"));
+            console.log(colors.gray("─".repeat(68)));
+            if (entries.length === 0) {
+              console.log(colors.gray("  (No saved profiles. Use '/db save <name> <url>' to add one)"));
+            } else {
+              for (const [pName, pData] of entries) {
+                const isActive = cfg.active === pName;
+                const badge = isActive ? colors.boldGreen(" [ACTIVE]") : "";
+                const masked = pData.url.replace(/:([^@/]+)@/, ":****@");
+                console.log(`• ${colors.boldCyan(pName)}${badge} ${colors.gray(`(${pData.engine || "db"})`)}`);
+                console.log(`  URL: ${colors.dim(masked)}`);
+                if (pData.description) console.log(`  Desc: ${colors.gray(pData.description)}`);
+              }
+            }
+            console.log();
+            break;
+          }
+
+          console.log(colors.red(`\nUnknown /db command: '${sub}'. Type '/db' for help.\n`));
+          break;
+        }
 
         case "/permissions": {
           const permConfig = loadPermissionConfig();

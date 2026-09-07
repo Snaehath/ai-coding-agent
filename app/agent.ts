@@ -624,13 +624,19 @@ Use tools to answer requests:
         });
       }
 
+      const targetNumCtx = Math.max(modelStats.configuredContextLength || 16384, 16384);
       const requestPayload: any = {
         model,
         messages: trimContextMessages(compactedMessages),
         tools: activeSkill?.tools ? allTools : toolRegistry.getActiveSchemas(),
+        num_ctx: targetNumCtx,
+        options: {
+          num_ctx: targetNumCtx,
+        },
         extra_body: {
+          num_ctx: targetNumCtx,
           options: {
-            num_ctx: modelStats.configuredContextLength || 32768,
+            num_ctx: targetNumCtx,
           },
         },
         stream: true,

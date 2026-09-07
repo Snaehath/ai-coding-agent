@@ -532,7 +532,15 @@ export function formatToolSummary(
     case "LSP_Hover":
       return `ℹ️ LSP Hover: ${args.symbol ?? filePath}`;
     default:
-      if (mcpMatch) return `🔌 MCP: ${mcpMatch.localName}`;
+      if (mcpMatch) {
+        if (mcpMatch.serverId === "postgres") {
+          if (mcpMatch.localName === "list_tables") return `📊 PostgreSQL: Listing tables`;
+          if (mcpMatch.localName === "describe_table") return `📋 PostgreSQL: Describing table ${args.table_name ?? ""}`;
+          if (mcpMatch.localName === "get_database_schema") return `🗄️ PostgreSQL: Inspecting DB schema`;
+          if (mcpMatch.localName === "read_query") return `🔍 PostgreSQL Query: "${String(args.query ?? "").slice(0, 45).replace(/\s+/g, " ")}"`;
+        }
+        return `🔌 MCP [${mcpMatch.serverId}]: ${mcpMatch.localName}`;
+      }
       return `⚡ Running: ${args.command ?? ""}`;
   }
 }
@@ -576,7 +584,13 @@ export function extractToolTarget(
       return "output";
     default:
       if (toolName.startsWith("LSP_")) return String(args.symbol ?? filePath);
-      if (mcpMatch) return mcpMatch.localName;
+      if (mcpMatch) {
+        if (mcpMatch.serverId === "postgres") {
+          if (mcpMatch.localName === "read_query") return String(args.query ?? "");
+          if (mcpMatch.localName === "describe_table") return String(args.table_name ?? "");
+        }
+        return mcpMatch.localName;
+      }
       return filePath;
   }
 }

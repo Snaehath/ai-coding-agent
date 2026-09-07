@@ -28,13 +28,15 @@ class ToolRegistry {
   // Register batch MCP tools
   registerMcpTools(mcpTools: McpToolSchema[]): void {
     for (const t of mcpTools) {
+      const isDb = /postgres|database|sql|db/i.test(t.function.name);
       this.catalog.set(t.function.name, {
         name: t.function.name,
-        category: "mcp",
+        category: isDb ? "database" : "mcp",
         description: t.function.description ?? "MCP external tool",
         schema: t,
-        isCore: false, // MCP tools discovered on-demand to save context
+        isCore: true, // Configured MCP tools in mcp.json are active by default
       });
+      this.activeTools.add(t.function.name);
     }
   }
 

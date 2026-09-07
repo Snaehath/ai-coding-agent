@@ -87,21 +87,18 @@ export async function fetchModelContextStats(
         }
       }
 
-      // 2. Extract configured num_ctx from parameters (if set in Modelfile)
-      if (typeof data.parameters === "string") {
+      // 2. Determine configured num_ctx (upgrade legacy 2048/4096 defaults to at least 16384)
+      const envNumCtx = process.env.OLLAMA_NUM_CTX ? parseInt(process.env.OLLAMA_NUM_CTX, 10) : null;
+      if (envNumCtx) {
+        configuredContextLength = envNumCtx;
+      } else if (typeof data.parameters === "string") {
         const numCtxMatch = data.parameters.match(/num_ctx\s+(\d+)/i);
-        if (numCtxMatch && numCtxMatch[1]) {
-          configuredContextLength = parseInt(numCtxMatch[1], 10);
-        } else {
-          // If no custom num_ctx specified, default to env or model capability
-          configuredContextLength = process.env.OLLAMA_NUM_CTX
-            ? parseInt(process.env.OLLAMA_NUM_CTX, 10)
-            : Math.min(modelContextLength, 65536);
-        }
+        const modelfileCtx = numCtxMatch ? parseInt(numCtxMatch[1], 10) : 0;
+        // Upgrade legacy low defaults (<= 4096) to at least 16384 for agentic tool use
+        configuredContextLength = Math.max(modelfileCtx, 16384);
+        configuredContextLength = Math.min(configuredContextLength, modelContextLength || 65536);
       } else {
-        configuredContextLength = process.env.OLLAMA_NUM_CTX
-          ? parseInt(process.env.OLLAMA_NUM_CTX, 10)
-          : Math.min(modelContextLength, 65536);
+        configuredContextLength = Math.min(Math.max(modelContextLength, 16384), 65536);
       }
     }
   } catch {

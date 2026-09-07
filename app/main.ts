@@ -120,12 +120,165 @@ async function main() {
   const activeModelId = determineActiveModel(cliModelArg);
   process.env.MODEL = activeModelId;
 
-  // --thinking / -t flag (low, medium, high, off)
+  // --thinking / -t / --think / -think flag (low, medium, high, off)
   const thinkingFlagIdx = args.findIndex(
-    (a) => a === "--thinking" || a === "-t",
+    (a) =>
+      a === "--thinking" ||
+      a === "-t" ||
+      a === "--think" ||
+      a === "-think",
   );
   if (thinkingFlagIdx !== -1 && args[thinkingFlagIdx + 1]) {
     process.env.THINKING_EFFORT = args[thinkingFlagIdx + 1].toLowerCase();
+  }
+
+  // --db <url_or_path> flag (Postgres, MySQL, SQLite)
+  const dbFlagIdx = args.findIndex((a) => a === "--db");
+  if (dbFlagIdx !== -1 && args[dbFlagIdx + 1]) {
+    const dbTarget = args[dbFlagIdx + 1];
+    const { dbManager } = await import("./connectors/db-manager.ts");
+    const res = await dbManager.connect(dbTarget);
+    if (res.ok) {
+      process.stdout.write(
+        colors.dim(`  ↳ [DB Connector] `) +
+          colors.green(`${res.engine.toUpperCase()}`) +
+          colors.dim(` connected (${res.tableCount} tables discovered in ${res.latencyMs}ms)\n`),
+      );
+    } else {
+      process.stderr.write(
+        colors.red(`  ↳ [DB Connector] Failed to connect: ${res.error}\n`),
+      );
+    }
+  }
+
+  // Direct CLI db command (e.g. `bun app/main.ts db connect <url>`, `bun app/main.ts db status`, `bun app/main.ts db tables`)
+  if (args[0] === "db" || args[0] === "/db") {
+    const sub = (args[1] || "").toLowerCase().trim();
+    const target = args.slice(2).join(" ").trim();
+    const { dbManager } = await import("./connectors/db-manager.ts");
+
+    if (!sub || sub === "status") {
+      await dbManager.autoConnect();
+      const active = dbManager.getActiveInfo();
+      const config = dbManager.loadConfig();
+      console.log("\nDatabase Connector Status:\n" + "─".repeat(68));
+      if (active && active.ok) {
+        console.log(`• Status   : CONNECTED`);
+        console.log(`• Engine   : ${active.version || active.engine.toUpperCase()}`);
+        console.log(`• Database : ${active.database || "default"}`);
+        console.log(`• Latency  : ${active.latencyMs}ms`);
+        console.log(`• Tables   : ${active.tableCount} table(s) discovered`);
+        console.log(`• Target   : ${dbManager.getActiveUrl().replace(/:([^@/]+)@/, ":****@")}`);
+      } else {
+        console.log(`• Status   : DISCONNECTED`);
+        if (config.active) console.log(`• Default  : Profile '${config.active}'`);
+      }
+      console.log("\nCommands:\n" + "─".repeat(68));
+      console.log("  bun app/main.ts db connect <url|path>   Connect & set active database");
+      console.log("  bun app/main.ts db use <profile_name>   Switch to saved connection profile");
+      console.log("  bun app/main.ts db save <name> <url>    Save named connection profile");
+      console.log("  bun app/main.ts db tables               List tables in active database");
+      console.log("  bun app/main.ts db schema [table]       View column schema or overview");
+      console.log("  bun app/main.ts db test                 Test connection latency & health\n");
+      return;
+    }
+
+    if (sub === "connect") {
+      if (!target) {
+        console.log("Error: Please provide a connection URL or path:\n  bun app/main.ts db connect <url>");
+        return;
+      }
+      console.log("Testing connection...");
+      const res = await dbManager.connect(target);
+      console.log("\n" + dbManager.formatConnectionCard(res, target) + "\n");
+      return;
+    }
+
+    if (sub === "use" || sub === "switch") {
+      if (!target) {
+        console.log("Usage: bun app/main.ts db use <profile_name>");
+        return;
+      }
+      const res = await dbManager.useProfile(target);
+      if (res.ok) {
+        const cfg = dbManager.loadConfig();
+        const url = cfg.connections[target]?.url || target;
+        console.log("\n" + dbManager.formatConnectionCard(res, url) + "\n");
+      } else {
+        console.log(`\n❌ Error: ${res.error}\n`);
+      }
+      return;
+    }
+
+    if (sub === "save") {
+      const [pName, pUrl] = target.split(/\s+/, 2);
+      if (!pName || !pUrl) {
+        console.log("Usage: bun app/main.ts db save <profile_name> <url>");
+        return;
+      }
+      dbManager.saveProfile(pName, pUrl);
+      console.log(`\n✅ Saved profile '${pName}' to .agents/connections.json\n`);
+      return;
+    }
+
+    if (sub === "tables" || sub === "list") {
+      await dbManager.autoConnect();
+      const adapter = dbManager.getActiveAdapter();
+      if (!adapter) {
+        console.log("No active database. Run: bun app/main.ts db connect <url>");
+        return;
+      }
+      const tables = await adapter.listTables();
+      console.log(`\nAvailable Tables (${tables.length} total):\n` + "─".repeat(68));
+      for (const t of tables) {
+        const rows =
+          t.approxRows !== undefined
+            ? (t.isExactRows ? ` (${t.approxRows} rows)` : ` (~${t.approxRows} rows)`)
+            : "";
+        console.log(`  • 📄 ${t.name}${rows} [${t.type}]`);
+      }
+      console.log();
+      return;
+    }
+
+    if (sub === "schema") {
+      await dbManager.autoConnect();
+      const adapter = dbManager.getActiveAdapter();
+      if (!adapter) {
+        console.log("No active database. Run: bun app/main.ts db connect <url>");
+        return;
+      }
+      if (target) {
+        const cols = await adapter.describeTable(target);
+        console.log(`\nTable Schema: ${target} (${cols.length} columns):\n` + "─".repeat(68));
+        for (const c of cols) {
+          const pk = c.isPrimaryKey ? " [PRIMARY KEY]" : "";
+          const nullStr = c.nullable ? "NULL" : "NOT NULL";
+          const def = c.defaultValue ? ` DEFAULT ${c.defaultValue}` : "";
+          console.log(`  • ${c.name}: ${c.type} (${nullStr}${pk}${def})`);
+        }
+        console.log();
+      } else {
+        console.log("\n" + (await adapter.getSchema()) + "\n");
+      }
+      return;
+    }
+
+    if (sub === "test") {
+      await dbManager.autoConnect();
+      const adapter = dbManager.getActiveAdapter();
+      if (!adapter) {
+        console.log("No active database. Run: bun app/main.ts db connect <url>");
+        return;
+      }
+      const test = await adapter.testConnection();
+      if (test.ok) {
+        console.log(`\n✅ Connection healthy (${test.latencyMs}ms) · ${test.tableCount} table(s) found.\n`);
+      } else {
+        console.log(`\n❌ Connection failed: ${test.error} (${test.latencyMs}ms)\n`);
+      }
+      return;
+    }
   }
 
   // --models / --list-models
