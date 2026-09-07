@@ -41,6 +41,7 @@ export interface ColumnSearchResult {
   table: string;
   column: string;
   type: string;
+  isPrimaryKey?: boolean;
 }
 
 export interface DatabaseAdapter {

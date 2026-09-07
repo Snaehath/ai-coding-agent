@@ -201,6 +201,7 @@ export class SqliteAdapter implements DatabaseAdapter {
               table: t.name,
               column: c.name,
               type: c.type,
+              isPrimaryKey: c.isPrimaryKey,
             });
           }
         }
