@@ -66,6 +66,31 @@ export function globToRegExp(pattern: string): RegExp {
   return new RegExp(`^${regexStr}$`, "i");
 }
 
+// Reusable directory walker that handles ignore rules and stop conditions
+export function walkFileSystem(
+  root: string,
+  onEntry: (entry: fs.Dirent, fullPath: string, relPath: string) => boolean | void,
+  dir: string = root,
+): void {
+  try {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (isIgnored(fullPath, root)) continue;
+
+      const relPath = path.relative(root, fullPath).replace(/\\/g, "/");
+      const shouldStop = onEntry(entry, fullPath, relPath);
+      if (shouldStop === false) return;
+
+      if (entry.isDirectory()) {
+        walkFileSystem(root, onEntry, fullPath);
+      }
+    }
+  } catch {
+    // skip unreadable directories
+  }
+}
+
 // 1. Glob: Find files matching a glob pattern
 export function executeGlob(
   pattern: string,
@@ -82,28 +107,14 @@ export function executeGlob(
     const matcher = globToRegExp(cleanPattern);
     const matches: string[] = [];
 
-    function walk(dir: string) {
-      if (matches.length >= maxResults) return;
-      const entries = fs.readdirSync(dir, { withFileTypes: true });
-
-      for (const entry of entries) {
-        if (matches.length >= maxResults) return;
-        const fullPath = path.join(dir, entry.name);
-        if (isIgnored(fullPath, root)) continue;
-
-        const relPath = path.relative(root, fullPath).replace(/\\/g, "/");
-
-        if (entry.isDirectory()) {
-          walk(fullPath);
-        } else if (entry.isFile()) {
-          if (matcher.test(relPath) || matcher.test(entry.name)) {
-            matches.push(relPath);
-          }
+    walkFileSystem(root, (entry, _fullPath, relPath) => {
+      if (matches.length >= maxResults) return false;
+      if (entry.isFile()) {
+        if (matcher.test(relPath) || matcher.test(entry.name)) {
+          matches.push(relPath);
         }
       }
-    }
-
-    walk(root);
+    });
 
     if (matches.length === 0) {
       return `No files matching "${pattern}" in ${path.relative(process.cwd(), root) || "."}.`;
@@ -172,29 +183,16 @@ export function executeGrep(
       }
     }
 
-    function walk(dir: string) {
-      if (results.length >= maxMatches) return;
-      const entries = fs.readdirSync(dir, { withFileTypes: true });
-
-      for (const entry of entries) {
-        if (results.length >= maxMatches) return;
-        const fullPath = path.join(dir, entry.name);
-        if (isIgnored(fullPath, root)) continue;
-
-        if (entry.isDirectory()) {
-          walk(fullPath);
-        } else if (entry.isFile()) {
-          const rel = path.relative(root, fullPath).replace(/\\/g, "/");
-          if (!includeMatcher || includeMatcher.test(rel) || includeMatcher.test(entry.name)) {
+    const stat = fs.statSync(root);
+    if (stat.isDirectory()) {
+      walkFileSystem(root, (entry, fullPath, relPath) => {
+        if (results.length >= maxMatches) return false;
+        if (entry.isFile()) {
+          if (!includeMatcher || includeMatcher.test(relPath) || includeMatcher.test(entry.name)) {
             searchFile(fullPath);
           }
         }
-      }
-    }
-
-    const stat = fs.statSync(root);
-    if (stat.isDirectory()) {
-      walk(root);
+      });
     } else {
       searchFile(root);
     }
@@ -232,27 +230,13 @@ export function executeFind(
     const cleanName = name.trim().toLowerCase().replace(/^['"]|['"]$/g, "");
     const matches: string[] = [];
 
-    function walk(dir: string) {
-      if (matches.length >= maxResults) return;
-      const entries = fs.readdirSync(dir, { withFileTypes: true });
-
-      for (const entry of entries) {
-        if (matches.length >= maxResults) return;
-        const fullPath = path.join(dir, entry.name);
-        if (isIgnored(fullPath, root)) continue;
-
-        const rel = path.relative(process.cwd(), fullPath).replace(/\\/g, "/");
-        if (entry.name.toLowerCase().includes(cleanName)) {
-          matches.push(rel + (entry.isDirectory() ? "/" : ""));
-        }
-
-        if (entry.isDirectory()) {
-          walk(fullPath);
-        }
+    walkFileSystem(root, (entry, fullPath) => {
+      if (matches.length >= maxResults) return false;
+      const rel = path.relative(process.cwd(), fullPath).replace(/\\/g, "/");
+      if (entry.name.toLowerCase().includes(cleanName)) {
+        matches.push(rel + (entry.isDirectory() ? "/" : ""));
       }
-    }
-
-    walk(root);
+    });
 
     if (matches.length === 0) {
       return `No files or directories found matching "${name}".`;

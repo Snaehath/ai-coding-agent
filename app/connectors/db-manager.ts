@@ -9,6 +9,7 @@ import type {
 import { PostgresAdapter } from "./adapters/postgres-adapter.ts";
 import { MysqlAdapter } from "./adapters/mysql-adapter.ts";
 import { SqliteAdapter } from "./adapters/sqlite-adapter.ts";
+import { ANSI } from "../markdown.ts";
 
 export const CONNECTIONS_CONFIG_PATH = path.resolve(
   process.cwd(),
@@ -248,6 +249,303 @@ export class DatabaseManager {
 
     lines.push(`\n🔌 Read-only AI database tools (list_tables, describe_table, preview_table, get_table_relationships, search_columns, explain_query, read_query) are active!`);
     return lines.join("\n");
+  }
+
+  // Unified CLI & REPL database command handler (eliminates duplicate logic across main.ts and repl.ts)
+  async handleCliCommand(sub: string, target: string = ""): Promise<void> {
+    const s = (sub || "").toLowerCase().trim();
+    const t = (target || "").trim();
+
+    if (!s || s === "status" || s === "help") {
+      await this.autoConnect();
+      const active = this.getActiveInfo();
+      const config = this.loadConfig();
+      console.log("\n" + ANSI.bold("Database Connector Status:"));
+      console.log(ANSI.gray("─".repeat(68)));
+      if (active && active.ok) {
+        console.log(
+          `  • Status   : ${ANSI.boldGreen("CONNECTED")}\n` +
+          `  • Engine   : ${ANSI.cyan(active.version || active.engine.toUpperCase())}\n` +
+          `  • Database : ${ANSI.bold(active.database || "default")}\n` +
+          `  • Latency  : ${ANSI.yellow(`${active.latencyMs}ms`)}\n` +
+          `  • Tables   : ${active.tableCount} table(s) discovered\n` +
+          `  • Target   : ${ANSI.dim(this.getActiveUrl().replace(/:([^@/]+)@/, ":****@"))}`
+        );
+      } else {
+        console.log(`  • Status   : ${ANSI.yellow("DISCONNECTED")}`);
+        if (config.active) {
+          console.log(`  • Default  : Profile '${config.active}' (type '/db use ${config.active}' or 'bun app/main.ts db use ${config.active}' to connect)`);
+        }
+      }
+
+      console.log(
+        `\n${ANSI.bold("Available Subcommands:")}\n` +
+        `  ${ANSI.boldYellow("/db connect <url|path>")}  Connect to PostgreSQL, MySQL, or SQLite\n` +
+        `  ${ANSI.boldYellow("/db test")}                Test connection health & latency\n` +
+        `  ${ANSI.boldYellow("/db tables")}              List available tables with row counts\n` +
+        `  ${ANSI.boldYellow("/db schema [table]")}     Inspect table columns or full schema\n` +
+        `  ${ANSI.boldYellow("/db preview <table> [n]")} Preview sample rows (default 3)\n` +
+        `  ${ANSI.boldYellow("/db relationships [t]")}  Discover foreign key relationships\n` +
+        `  ${ANSI.boldYellow("/db search <col>")}        Find which tables have a column\n` +
+        `  ${ANSI.boldYellow("/db explain <sql>")}       Explain execution plan of a query\n` +
+        `  ${ANSI.boldYellow("/db save <name> <url>")}   Save named connection profile\n` +
+        `  ${ANSI.boldYellow("/db use <name>")}          Switch to saved profile\n` +
+        `  ${ANSI.boldYellow("/db profiles")}            List all saved connection profiles\n` +
+        `  ${ANSI.boldYellow("/db disconnect")}          Disconnect active database\n`
+      );
+      return;
+    }
+
+    if (s === "connect") {
+      if (!t) {
+        console.log(ANSI.red("\nUsage: /db connect <postgresql://... | mysql://... | ./local.db>\n"));
+        return;
+      }
+      console.log(ANSI.dim(`\n  ⚡ Testing connection to database...`));
+      const res = await this.connect(t);
+      console.log("\n" + this.formatConnectionCard(res, t) + "\n");
+      return;
+    }
+
+    if (s === "test") {
+      await this.autoConnect();
+      const adapter = this.getActiveAdapter();
+      if (!adapter) {
+        console.log(ANSI.yellow("\n⚠️ No active database connection. Connect using '/db connect <url>'\n"));
+        return;
+      }
+      console.log(ANSI.dim(`\n  ⚡ Testing database latency & health...`));
+      const test = await adapter.testConnection();
+      if (test.ok) {
+        console.log(ANSI.green(`\n✅ Database is healthy (${test.latencyMs}ms) · ${test.tableCount} table(s) accessible.\n`));
+      } else {
+        console.log(ANSI.red(`\n❌ Health check failed: ${test.error} (${test.latencyMs}ms)\n`));
+      }
+      return;
+    }
+
+    if (s === "tables" || s === "list") {
+      await this.autoConnect();
+      const adapter = this.getActiveAdapter();
+      if (!adapter) {
+        console.log(ANSI.yellow("\n⚠️ No active database connection. Connect using '/db connect <url>'\n"));
+        return;
+      }
+      try {
+        const tables = await adapter.listTables();
+        console.log(`\n${ANSI.bold(`Available Tables (${tables.length} total):`)}`);
+        console.log(ANSI.gray("─".repeat(68)));
+        for (const tbl of tables) {
+          const rows =
+            tbl.approxRows !== undefined
+              ? ANSI.dim(tbl.isExactRows ? ` (${tbl.approxRows} rows)` : ` (~${tbl.approxRows} rows)`)
+              : "";
+          console.log(`  • 📄 ${ANSI.boldCyan(tbl.name)}${rows} ${ANSI.gray(`[${tbl.type}]`)}`);
+        }
+        console.log();
+      } catch (err: any) {
+        console.log(ANSI.red(`\n❌ Error fetching tables: ${err.message}\n`));
+      }
+      return;
+    }
+
+    if (s === "schema") {
+      await this.autoConnect();
+      const adapter = this.getActiveAdapter();
+      if (!adapter) {
+        console.log(ANSI.yellow("\n⚠️ No active database connection. Connect using '/db connect <url>'\n"));
+        return;
+      }
+      try {
+        if (t) {
+          const cols = await adapter.describeTable(t);
+          console.log(`\n${ANSI.bold(`Table Schema: ${t} (${cols.length} columns):`)}`);
+          console.log(ANSI.gray("─".repeat(68)));
+          for (const c of cols) {
+            const pk = c.isPrimaryKey ? ANSI.boldYellow(" [PRIMARY KEY]") : "";
+            const nullStr = c.nullable ? ANSI.dim("NULL") : ANSI.bold("NOT NULL");
+            const def = c.defaultValue ? ANSI.gray(` DEFAULT ${c.defaultValue}`) : "";
+            console.log(`  • ${ANSI.boldCyan(c.name)}: ${c.type} (${nullStr}${pk}${def})`);
+          }
+          console.log();
+        } else {
+          const fullSchema = await adapter.getSchema();
+          console.log("\n" + fullSchema + "\n");
+        }
+      } catch (err: any) {
+        console.log(ANSI.red(`\n❌ Error fetching schema: ${err.message}\n`));
+      }
+      return;
+    }
+
+    if (s === "preview") {
+      await this.autoConnect();
+      const adapter = this.getActiveAdapter();
+      if (!adapter) {
+        console.log(ANSI.yellow("\n⚠️ No active database connection. Connect using '/db connect <url>'\n"));
+        return;
+      }
+      const [tbl, limitStr] = t.split(/\s+/, 2);
+      if (!tbl) {
+        console.log(ANSI.red("\nUsage: /db preview <table_name> [limit]\n"));
+        return;
+      }
+      const limit = limitStr ? parseInt(limitStr, 10) : 3;
+      try {
+        const rows = await adapter.previewTable(tbl, isNaN(limit) ? 3 : limit);
+        console.log(`\n${ANSI.bold(`Preview of '${tbl}' (${rows.length} row(s)):`)}`);
+        console.log(ANSI.gray("─".repeat(68)));
+        if (rows.length === 0) {
+          console.log(ANSI.gray("  (No rows found in table)"));
+        } else {
+          console.log(JSON.stringify(rows, null, 2));
+        }
+        console.log();
+      } catch (err: any) {
+        console.log(ANSI.red(`\n❌ Error previewing table: ${err.message}\n`));
+      }
+      return;
+    }
+
+    if (s === "relationships" || s === "fk" || s === "relations") {
+      await this.autoConnect();
+      const adapter = this.getActiveAdapter();
+      if (!adapter) {
+        console.log(ANSI.yellow("\n⚠️ No active database connection. Connect using '/db connect <url>'\n"));
+        return;
+      }
+      try {
+        const rels = await adapter.getRelationships(t || undefined);
+        console.log(`\n${ANSI.bold(`Table Relationships (${rels.length} constraint(s)):`)}`);
+        console.log(ANSI.gray("─".repeat(68)));
+        if (rels.length === 0) {
+          console.log(ANSI.gray("  (No foreign key relationships detected)"));
+        } else {
+          for (const r of rels) {
+            console.log(
+              `  • ${ANSI.boldCyan(r.fromTable)}.${ANSI.yellow(r.fromColumn)} ➔ ` +
+              `${ANSI.boldCyan(r.toTable)}.${ANSI.yellow(r.toColumn)} ` +
+              `${ANSI.gray(`(${r.constraintName})`)}`
+            );
+          }
+        }
+        console.log();
+      } catch (err: any) {
+        console.log(ANSI.red(`\n❌ Error fetching relationships: ${err.message}\n`));
+      }
+      return;
+    }
+
+    if (s === "search" || s === "find-col") {
+      await this.autoConnect();
+      const adapter = this.getActiveAdapter();
+      if (!adapter) {
+        console.log(ANSI.yellow("\n⚠️ No active database connection. Connect using '/db connect <url>'\n"));
+        return;
+      }
+      if (!t) {
+        console.log(ANSI.red("\nUsage: /db search <column_keyword>\n"));
+        return;
+      }
+      try {
+        const matches = await adapter.searchColumns(t);
+        console.log(`\n${ANSI.bold(`Columns matching '${t}' (${matches.length} found):`)}`);
+        console.log(ANSI.gray("─".repeat(68)));
+        if (matches.length === 0) {
+          console.log(ANSI.gray(`  (No columns matching '${t}')`));
+        } else {
+          for (const m of matches) {
+            const pk = m.isPrimaryKey ? ANSI.boldYellow(" [PK]") : "";
+            console.log(`  • ${ANSI.boldCyan(m.table)}.${ANSI.yellow(m.column)} ${ANSI.gray(`(${m.type})`)}${pk}`);
+          }
+        }
+        console.log();
+      } catch (err: any) {
+        console.log(ANSI.red(`\n❌ Error searching columns: ${err.message}\n`));
+      }
+      return;
+    }
+
+    if (s === "explain") {
+      await this.autoConnect();
+      const adapter = this.getActiveAdapter();
+      if (!adapter) {
+        console.log(ANSI.yellow("\n⚠️ No active database connection. Connect using '/db connect <url>'\n"));
+        return;
+      }
+      if (!t) {
+        console.log(ANSI.red("\nUsage: /db explain <SELECT query>\n"));
+        return;
+      }
+      try {
+        console.log(ANSI.dim(`\n  ⚡ Explaining query execution plan...`));
+        const plan = await adapter.explainQuery(t);
+        console.log(`\n${ANSI.bold("Execution Plan:")}`);
+        console.log(ANSI.gray("─".repeat(68)));
+        console.log(plan);
+        console.log();
+      } catch (err: any) {
+        console.log(ANSI.red(`\n❌ Error explaining query: ${err.message}\n`));
+      }
+      return;
+    }
+
+    if (s === "disconnect") {
+      await this.disconnect();
+      console.log(ANSI.green("\n🔌 Database disconnected successfully.\n"));
+      return;
+    }
+
+    if (s === "save") {
+      const [pName, pUrl] = t.split(/\s+/, 2);
+      if (!pName || !pUrl) {
+        console.log(ANSI.red("\nUsage: /db save <profile_name> <connection_url>\n"));
+        return;
+      }
+      this.saveProfile(pName, pUrl);
+      console.log(ANSI.green(`\n✅ Saved profile '${pName}' in .agents/connections.json\n`));
+      return;
+    }
+
+    if (s === "use" || s === "switch") {
+      if (!t) {
+        console.log(ANSI.red("\nUsage: /db use <profile_name>\n"));
+        return;
+      }
+      console.log(ANSI.dim(`\n  ⚡ Connecting to profile '${t}'...`));
+      const res = await this.useProfile(t);
+      if (res.ok) {
+        const cfg = this.loadConfig();
+        const url = cfg.connections[t]?.url || t;
+        console.log("\n" + this.formatConnectionCard(res, url) + "\n");
+      } else {
+        console.log(ANSI.red(`\n❌ Connection failed: ${res.error}\n`));
+      }
+      return;
+    }
+
+    if (s === "profiles") {
+      const cfg = this.loadConfig();
+      const entries = Object.entries(cfg.connections);
+      console.log("\n" + ANSI.bold("Saved Connection Profiles:"));
+      console.log(ANSI.gray("─".repeat(68)));
+      if (entries.length === 0) {
+        console.log(ANSI.gray("  (No saved profiles. Use '/db save <name> <url>' to add one)"));
+      } else {
+        for (const [pName, pData] of entries) {
+          const isActive = cfg.active === pName;
+          const badge = isActive ? ANSI.boldGreen(" [ACTIVE]") : "";
+          const masked = pData.url.replace(/:([^@/]+)@/, ":****@");
+          console.log(`• ${ANSI.boldCyan(pName)}${badge} ${ANSI.gray(`(${pData.engine || "db"})`)}`);
+          console.log(`  URL: ${ANSI.dim(masked)}`);
+          if (pData.description) console.log(`  Desc: ${ANSI.gray(pData.description)}`);
+        }
+      }
+      console.log();
+      return;
+    }
+
+    console.log(ANSI.red(`\nUnknown /db command: '${s}'. Type '/db' for help.\n`));
   }
 }
 
