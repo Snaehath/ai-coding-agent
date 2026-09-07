@@ -227,6 +227,8 @@ export async function runReplMode(options: {
               `\n  ${colors.boldYellow("/db [cmd]")}          Database connector (connect, test, tables, schema, use)` +
               `\n  ${colors.boldYellow("/entropy")} | ${colors.boldYellow("/gc")}   Scan for dead code, unused deps & project entropy` +
               `\n  ${colors.boldYellow("/stats")}            View real-time agent telemetry & metrics` +
+              `\n  ${colors.boldYellow("/instruct <file>")}  Execute prompt from an instruction file` +
+              `\n  ${colors.boldYellow("/persona [name]")}   Switch agent persona/role (e.g. /persona dba)` +
               `\n  ${colors.boldYellow("/clear")} | ${colors.boldYellow("/new")}     Start a fresh session` +
               `\n  ${colors.boldYellow("/sessions")} | ${colors.boldYellow("/list")} List saved sessions` +
               `\n  ${colors.boldYellow("/resume <id>")}    Resume an existing session` +
@@ -586,6 +588,101 @@ export async function runReplMode(options: {
             console.log(
               colors.green(`🔄 Resumed ${id} · ${history.length} messages\n`),
             );
+          }
+          break;
+        }
+
+        case "/instruct":
+        case "/instruction":
+        case "/load": {
+          const filePath = rest.join(" ").trim();
+          if (!filePath) {
+            console.log(colors.yellow("Usage: /instruct <path/to/file.md>\n"));
+            break;
+          }
+          const resolved = path.resolve(process.cwd(), filePath);
+          const file = Bun.file(resolved);
+          if (!(await file.exists())) {
+            console.log(colors.red(`❌ Instruction file not found: ${filePath}\n`));
+            break;
+          }
+          const instructText = (await file.text()).trim();
+          console.log(
+            colors.dim(`  ↳ Loaded instruction file: `) +
+              colors.cyan(filePath) +
+              colors.dim(` (${instructText.length} chars)\n`),
+          );
+
+          try {
+            isRunning = true;
+            let streamedAny = false;
+            const mdStreamer = createMarkdownStreamer((text) => {
+              if (!streamedAny) {
+                process.stdout.write(colors.boldCyan("agent ❯ "));
+                streamedAny = true;
+              }
+              process.stdout.write(text);
+            });
+
+            const result = await runAgentMode(
+              instructText,
+              history,
+              currentSessionFile,
+              "repl",
+              undefined,
+              (t) => mdStreamer.write(t),
+            );
+
+            mdStreamer.flush();
+
+            if (!streamedAny) {
+              process.stdout.write(
+                colors.boldCyan("agent ❯ ") + renderTerminalMarkdown(result),
+              );
+            }
+            process.stdout.write("\n\n");
+          } catch (e: any) {
+            process.stdout.write(`\n${colors.red(`Error: ${e.message}`)}\n\n`);
+          } finally {
+            isRunning = false;
+          }
+          break;
+        }
+
+        case "/persona":
+        case "/role": {
+          const { loadAllPersonas, resolvePersona } = await import("./personas.ts");
+          const target = rest.join(" ").trim();
+          if (!target) {
+            const all = loadAllPersonas();
+            console.log("\n" + colors.bold("Available Personas:"));
+            console.log(colors.gray("─".repeat(68)));
+            for (const p of all) {
+              const cur = process.env.PERSONA === p.id;
+              console.log(
+                `${cur ? colors.boldGreen("▶ ") : "  "}${colors.boldCyan(p.name)} ${colors.gray(`(${p.id})`)}${cur ? colors.green(" [ACTIVE]") : ""}`,
+              );
+              console.log(`    ${colors.dim(p.description)}`);
+              if (p.allowedTools && p.allowedTools.length > 0) {
+                console.log(`    ${colors.gray("Tools:")} ${colors.dim(p.allowedTools.join(", "))}`);
+              }
+            }
+            console.log(colors.dim("\n  Switch with: /persona <id> (e.g. /persona dba)\n"));
+          } else if (target === "clear" || target === "reset" || target === "off" || target === "none") {
+            delete process.env.PERSONA;
+            console.log(colors.green("✨ Reset to default generalist assistant persona.\n"));
+          } else {
+            const matched = resolvePersona(target);
+            if (matched) {
+              process.env.PERSONA = matched.id;
+              console.log(
+                colors.green(`🎭 Active persona switched to: `) +
+                  colors.boldCyan(`${matched.name} (${matched.id})\n`) +
+                  colors.dim(`   ${matched.description}\n`),
+              );
+            } else {
+              console.log(colors.red(`❌ Persona "${target}" not found. Type /persona to see available personas.\n`));
+            }
           }
           break;
         }

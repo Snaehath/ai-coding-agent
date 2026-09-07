@@ -729,6 +729,7 @@
       <div class="sidebar-section">
         <div class="sidebar-heading">Core Engine</div>
         <ul class="sidebar-menu">
+          <li><a href="#quickstart">🚀 60-Second Quickstart</a></li>
           <li><a href="#overview">🏛️ System Architecture</a></li>
           <li><a href="#models-engine">🧠 Local Models & VRAM</a></li>
           <li><a href="#thinking-stream">💭 Claude Code Thinking</a></li>
@@ -770,6 +771,7 @@
           <li><a href="#repl-reference">⌨️ Interactive REPL (/cmd)</a></li>
           <li><a href="#cli-flags">💻 Terminal CLI Flags</a></li>
           <li><a href="#config-files">⚙️ Configuration Files</a></li>
+          <li><a href="#faq">💡 FAQ & Real Scenarios</a></li>
         </ul>
       </div>
     </aside>
@@ -802,6 +804,60 @@
           <div class="stat-card">
             <div class="stat-number">0ms</div>
             <div class="stat-label">Cloud Latency (Local Ollama)</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section 0: 60-Second Quickstart -->
+      <section id="quickstart" class="doc-section search-item">
+        <div class="section-header">
+          <h2 class="section-title">🚀 60-Second Quickstart</h2>
+          <span class="section-tag">Get Started Fast</span>
+        </div>
+
+        <p class="card-text" style="font-size: 1.05rem; margin-bottom: 1.5rem;">
+          Get the autonomous agent running locally on your workstation in 3 simple commands:
+        </p>
+
+        <div class="grid-3" style="margin-bottom: 1.5rem;">
+          <div class="feature-card">
+            <span class="badge-cyan" style="margin-bottom: 0.6rem;">Step 1</span>
+            <h4 class="card-title">Pull Local Model</h4>
+            <p class="card-text" style="margin-bottom: 1rem;">Run Granite 3B (or Qwen 2.5 Coder) via Ollama:</p>
+            <div class="code-block" style="margin: 0;">
+              <div class="code-header">
+                <span>Terminal</span>
+                <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code>ollama run granite4.2:3b</code></pre>
+            </div>
+          </div>
+
+          <div class="feature-card">
+            <span class="badge-primary" style="margin-bottom: 0.6rem;">Step 2</span>
+            <h4 class="card-title">Launch Interactive REPL</h4>
+            <p class="card-text" style="margin-bottom: 1rem;">Start the agent runtime with Bun:</p>
+            <div class="code-block" style="margin: 0;">
+              <div class="code-header">
+                <span>Terminal</span>
+                <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code>bun dev</code></pre>
+            </div>
+          </div>
+
+          <div class="feature-card">
+            <span class="badge-emerald" style="margin-bottom: 0.6rem;">Step 3</span>
+            <h4 class="card-title">Ask Your First Task</h4>
+            <p class="card-text" style="margin-bottom: 1rem;">Prompt the assistant or switch models:</p>
+            <div class="code-block" style="margin: 0;">
+              <div class="code-header">
+                <span>REPL / CLI</span>
+                <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+              </div>
+              <pre><code>/model  <span class="token-comment"># pick model</span>
+"Audit dead code in app/"</code></pre>
+            </div>
           </div>
         </div>
       </section>
@@ -1412,6 +1468,14 @@ bun app/main.ts -m gemma --image screenshot.png -p "Describe this UI layout"</co
                 <td>Inspect active sandbox policies and tool execution gates</td>
               </tr>
               <tr>
+                <td><code>/instruct &lt;file&gt;</code></td>
+                <td>Execute prompt directly from an instruction markdown/text file without manual pasting</td>
+              </tr>
+              <tr>
+                <td><code>/persona [name]</code></td>
+                <td>Switch active agent persona template (e.g. <code>/persona dba</code> or <code>/persona clear</code>)</td>
+              </tr>
+              <tr>
                 <td><code>/history</code></td>
                 <td>View session turns, token telemetry boxes, and latency metrics</td>
               </tr>
@@ -1444,6 +1508,18 @@ bun app/main.ts -m gemma --image screenshot.png -p "Describe this UI layout"</co
 bun dev
 <span class="token-comment"># or</span>
 bun app/main.ts
+
+<span class="token-comment"># Activate a specialized Persona (e.g. Database Architect)</span>
+bun app/main.ts -P dba -p "How do I optimize composite indexes for 10M rows?"
+
+<span class="token-comment"># List all available agent personas</span>
+bun app/main.ts --personas
+
+<span class="token-comment"># Execute instructions from a file (-instruct, --instruct, -f)</span>
+bun app/main.ts -instruct instructions/truck-loader.md
+
+<span class="token-comment"># Combine instruction file with supplementary prompt</span>
+bun app/main.ts -instruct instructions/truck-loader.md -p "Ensure 60fps wheel rotation"
 
 <span class="token-comment"># Single-prompt mode</span>
 bun app/main.ts -p "Find all unhandled promise rejections in src/"
@@ -1482,6 +1558,56 @@ bun app/main.ts db preview users 3</code></pre>
           <div class="feature-card">
             <h4 class="card-title">.agents/permissions.json</h4>
             <p class="card-text">Defines safe directories, bash tool approval gates, and network access policies.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section 9: Frequently Asked Questions & Real-World Scenarios -->
+      <section id="faq" class="doc-section search-item">
+        <div class="section-header">
+          <h2 class="section-title">💡 Frequently Asked Questions &amp; Scenarios</h2>
+          <span class="section-tag">Developer Q&amp;A</span>
+        </div>
+
+        <div class="grid-2">
+          <!-- FAQ 1 -->
+          <div class="feature-card">
+            <h4 class="card-title" style="color: var(--cyan);">❓ Connector vs Plugin vs Tool vs Hook — What's the difference?</h4>
+            <p class="card-text">
+              • <strong>Tool</strong>: A discrete function callable by the model (e.g. <code>Read</code>, <code>Edit</code>, <code>preview_table</code>).<br/>
+              • <strong>MCP Tool</strong>: A tool served externally via Model Context Protocol JSON-RPC.<br/>
+              • <strong>Connector</strong>: An infrastructure bridge to persistent backends (PostgreSQL, MySQL, SQLite, GitHub, Redis) handling connection pooling, latency, and health.<br/>
+              • <strong>Hook / Middleware</strong>: Lifecycle interceptors running before/after requests without LLM invocation.<br/>
+              • <strong>Plugin</strong>: A packaged bundle combining skills, rules, and tools.
+            </p>
+          </div>
+
+          <!-- FAQ 2 -->
+          <div class="feature-card">
+            <h4 class="card-title" style="color: var(--emerald);">❓ How can a 3B model query 50,000 DB rows without choking?</h4>
+            <p class="card-text">
+              <strong>Database-Side Computation</strong>: The agent instructs Granite 3B to execute SQL aggregates (<code>SUM</code>, <code>COUNT</code>, <code>AVG</code>, <code>GROUP BY</code>) through <code>read_query</code>. 
+              The database filters 50,000 rows in 5ms and returns 1–5 concise summary rows to prompt memory.
+            </p>
+          </div>
+
+          <!-- FAQ 3 -->
+          <div class="feature-card">
+            <h4 class="card-title" style="color: var(--amber);">❓ Why did reltuples say 0 rows and how does Tiered Counting fix it?</h4>
+            <p class="card-text">
+              In PostgreSQL, <code>pg_class.reltuples</code> is an un-vacuumed statistical estimate. When a table has 10 newly inserted rows, <code>reltuples</code> can falsely report <code>0</code>. 
+              Our Tier 2 fallback executes a fast <code>COUNT(*)</code> protected by a <code>statement_timeout = 500ms</code>, ensuring accuracy without stalling on massive tables.
+            </p>
+          </div>
+
+          <!-- FAQ 4 -->
+          <div class="feature-card">
+            <h4 class="card-title" style="color: var(--rose);">❓ How do I feed screenshots &amp; UI mockups to local models?</h4>
+            <p class="card-text">
+              Use vision-capable local models like <code>gemma</code> (Gemma 3 4B Tools) or <code>ministral</code>:
+              <br/>
+              <code>bun app/main.ts -m gemma --image screenshot.png -p "Convert this UI mockup into HTML/CSS"</code>
+            </p>
           </div>
         </div>
       </section>

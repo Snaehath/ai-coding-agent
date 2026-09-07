@@ -28,6 +28,7 @@ import {
 } from "./tool-discovery.ts";
 import { lspService } from "./lsp-service.ts";
 import { performWebSearch, formatSearchResults } from "./web-search.ts";
+import { DB_TOOLS, executeDbTool, isDbTool } from "./connectors/db-tools.ts";
 
 export interface ToolExecutionContext {
   sessionId: string;
@@ -44,7 +45,7 @@ export interface ToolExecutionOutput {
 }
 
 // Built-in Tool Schemas for Model Function Calling
-export const BUILTIN_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
+export const BUILTIN_TOOLS: OpenAI.Chat.Completions.ChatCompletionFunctionTool[] = [
   {
     type: "function",
     function: {
@@ -429,6 +430,8 @@ export const BUILTIN_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   },
 ];
 
+BUILTIN_TOOLS.push(...DB_TOOLS);
+
 // Initialize tool catalog with core and specialized tools
 export function setupToolRegistry(mcpTools: McpToolSchema[] = []) {
   const coreTools = new Set([
@@ -452,6 +455,7 @@ export function setupToolRegistry(mcpTools: McpToolSchema[] = []) {
   ]);
 
   for (const tool of BUILTIN_TOOLS) {
+    if (tool.type !== "function" || !("function" in tool)) continue;
     const name = tool.function.name;
     let category: any = "specialized";
     if (["Read", "Write", "Edit", "Tree", "Find", "Grep", "Glob"].includes(name))
@@ -464,6 +468,7 @@ export function setupToolRegistry(mcpTools: McpToolSchema[] = []) {
     else if (name === "Inspect") category = "introspection";
     else if (name.startsWith("LSP_")) category = "navigation";
     else if (name === "WebSearch") category = "web";
+    else if (name.startsWith("db_")) category = "database";
 
     toolRegistry.register({
       name,
@@ -531,8 +536,30 @@ export function formatToolSummary(
       return `📑 LSP Symbols: ${filePath}`;
     case "LSP_Hover":
       return `ℹ️ LSP Hover: ${args.symbol ?? filePath}`;
+    case "db_list_tables":
+      return `📊 Database: Listing tables`;
+    case "db_describe_table":
+      return `📋 Database: Describing table ${args.table_name ?? ""}`;
+    case "db_schema":
+      return `🗄️ Database: Inspecting schema`;
+    case "db_query":
+      return `🔍 Database Query: "${String(args.query ?? "").slice(0, 45).replace(/\s+/g, " ")}"`;
+    case "db_preview":
+      return `👁️ Database: Previewing table ${args.table_name ?? ""} (${args.limit ?? 3} rows)`;
+    case "db_relationships":
+      return `🔗 Database: Inspecting relationships ${args.table_name ? `for ${args.table_name}` : `(all tables)`}`;
+    case "db_search":
+      return `🔎 Database: Searching columns matching "${args.keyword ?? ""}"`;
+    case "db_explain":
+      return `⚡ Database: Explaining query "${String(args.query ?? "").slice(0, 40).replace(/\s+/g, " ")}"`;
     default:
       if (mcpMatch) {
+        if (mcpMatch.serverId === "tools") {
+          if (mcpMatch.localName === "get_time") return `⏱️ MCP: Get current time`;
+          if (mcpMatch.localName === "list_files") return `📁 MCP: List files in ${args.dir ?? "."}`;
+          if (mcpMatch.localName === "http_ping") return `🌐 MCP: Ping ${args.url ?? ""}`;
+          if (mcpMatch.localName === "get_weather") return `🌤️ MCP: Weather for ${args.location ?? ""}`;
+        }
         if (mcpMatch.serverId === "postgres") {
           if (mcpMatch.localName === "list_tables") return `📊 PostgreSQL: Listing tables`;
           if (mcpMatch.localName === "describe_table") return `📋 PostgreSQL: Describing table ${args.table_name ?? ""}`;
@@ -587,8 +614,17 @@ export function extractToolTarget(
     case "EvaluateOutput":
       return "output";
     default:
+      if (isDbTool(toolName)) {
+        return String(args.table_name || args.query || args.keyword || args.schema || "database");
+      }
       if (toolName.startsWith("LSP_")) return String(args.symbol ?? filePath);
       if (mcpMatch) {
+        if (mcpMatch.serverId === "tools") {
+          if (mcpMatch.localName === "get_weather") return String(args.location ?? "weather");
+          if (mcpMatch.localName === "http_ping") return String(args.url ?? "ping");
+          if (mcpMatch.localName === "list_files") return String(args.dir ?? ".");
+          if (mcpMatch.localName === "get_time") return "time";
+        }
         if (mcpMatch.serverId === "postgres") {
           if (mcpMatch.localName === "read_query" || mcpMatch.localName === "explain_query") return String(args.query ?? "");
           if (mcpMatch.localName === "describe_table" || mcpMatch.localName === "preview_table") return String(args.table_name ?? "");
@@ -610,6 +646,12 @@ export async function executeTool(
 ): Promise<ToolExecutionOutput> {
   let result: string;
   let actionSummary: string | undefined;
+
+  if (isDbTool(toolName)) {
+    result = await executeDbTool(toolName, args);
+    actionSummary = formatToolSummary(toolName, args, filePath);
+    return { result, actionSummary };
+  }
 
   switch (toolName) {
     case "Read": {

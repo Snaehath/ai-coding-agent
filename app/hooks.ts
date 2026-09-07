@@ -29,6 +29,7 @@ export type HookContext = {
   result?: string;
   actionLog?: string[];
   sessionId?: string;
+  args?: any;
 };
 
 // ANSI color helpers

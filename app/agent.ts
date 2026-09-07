@@ -5,6 +5,7 @@ import { exec } from "node:child_process";
 import { McpClient, type McpToolSchema } from "./mcp-client.ts";
 import { appendSessionMessage, trimContextMessages } from "./session.ts";
 import { loadAllSkills, matchSkill } from "./skills.ts";
+import { resolvePersona } from "./personas.ts";
 import { performWebSearch, formatSearchResults } from "./web-search.ts";
 import {
   loadPermissionConfig,
@@ -443,10 +444,30 @@ export async function runAgentMode(
     ...allTools.map((t) => t.function.name),
   ]);
 
+  // Discover and match active persona
+  const activePersona = resolvePersona(process.env.PERSONA);
+
+  // Enforce tool restrictions if active persona specifies allowed tools
+  if (activePersona?.allowedTools && activePersona.allowedTools.length > 0) {
+    const allowedSet = new Set(activePersona.allowedTools);
+    allTools = allTools.filter(
+      (t) =>
+        allowedSet.has(t.function.name) ||
+        allowedSet.has(t.function.name.replace(/^mcp__[^_]+__/, "")),
+    );
+  }
+
   // Notify skill activation in terminal
   if (activeSkill) {
     process.stdout.write(
       `  ${colors.dim("↳")} ${colors.boldMagenta(`[Skill: ${activeSkill.name}]`)} ${colors.gray(activeSkill.description.slice(0, 70))}...\n`,
+    );
+  }
+
+  // Notify persona activation in terminal
+  if (activePersona) {
+    process.stdout.write(
+      `  ${colors.dim("↳")} ${colors.boldCyan(`[Persona: ${activePersona.name}]`)} ${colors.gray(activePersona.description.slice(0, 70))}...\n`,
     );
   }
 
@@ -462,6 +483,9 @@ export async function runAgentMode(
         : "";
     const activeSkillPrompt = activeSkill
       ? `\n\n--- ACTIVE SKILL: ${activeSkill.name} ---\n${activeSkill.instructions}\n----------------------------------`
+      : "";
+    const activePersonaPrompt = activePersona
+      ? `\n\n--- ACTIVE PERSONA: ${activePersona.name} ---\n${activePersona.systemPrompt}\n----------------------------------`
       : "";
 
     messages.unshift({
@@ -499,7 +523,7 @@ Use tools to answer requests:
   - Find: Locate files or directories by name (e.g. find("package.json")).
   - Grep: Search file contents for keywords, regex, or code occurrences with line numbers (e.g. grep("useEffect", "src/")).
 - Shell:
-  - Bash: Execute build, test, git, or command-line tasks.${mcpList}${skillList}${activeSkillPrompt}
+  - Bash: Execute build, test, git, or command-line tasks.${mcpList}${skillList}${activeSkillPrompt}${activePersonaPrompt}
 - Task Alignment: Stay strictly focused on the user's specific coding task. Do not deviate or execute unrelated system tasks.
 - Security & Path Safety: Never attempt to access private keys (.ssh), cloud credentials (.aws), system directories (C:\\Windows, /etc), or execute destructive filesystem commands.
 - Loop Prevention: When a tool returns a result or error, do NOT invoke the exact same tool with identical arguments again. Instead, present that answer or explain the issue in natural language to the user.
@@ -624,11 +648,11 @@ Use tools to answer requests:
         });
       }
 
-      const targetNumCtx = Math.max(modelStats.configuredContextLength || 16384, 16384);
+      const targetNumCtx = modelStats.configuredContextLength || 8192;
       const requestPayload: any = {
         model,
         messages: trimContextMessages(compactedMessages),
-        tools: activeSkill?.tools ? allTools : toolRegistry.getActiveSchemas(),
+        tools: (activeSkill?.tools || activePersona?.allowedTools) ? allTools : toolRegistry.getActiveSchemas(),
         num_ctx: targetNumCtx,
         options: {
           num_ctx: targetNumCtx,
@@ -653,7 +677,7 @@ Use tools to answer requests:
         }
       }
 
-      const stream = await llm.chat.completions.create(requestPayload);
+      const stream = (await llm.chat.completions.create(requestPayload)) as any;
 
       let fullContent = "";
       let inReasoningField = false;
@@ -736,103 +760,114 @@ Use tools to answer requests:
         { id?: string; name: string; args: string }
       >();
 
-      for await (const chunk of stream) {
-        const delta = chunk.choices[0]?.delta as any;
-        if (!delta) continue;
+      try {
+        for await (const chunk of stream) {
+          const delta = chunk.choices[0]?.delta as any;
+          if (!delta) continue;
 
-        const reasoningChunk =
-          delta.reasoning_content || delta.reasoning || delta.thinking || "";
+          const reasoningChunk =
+            delta.reasoning_content || delta.reasoning || delta.thinking || "";
 
-        if (delta.content || delta.tool_calls || reasoningChunk) {
-          if (!firstTokenTime) firstTokenTime = performance.now();
-        }
-
-        // 1. Handle dedicated reasoning_content chunk
-        if (reasoningChunk) {
-          if (!inReasoningField) {
-            inReasoningField = true;
-            thinkingStartTime = performance.now();
-            thinkingBuffer = "";
-          }
-          updateThinkingCommentary(reasoningChunk);
-        }
-
-        // 2. Handle content chunk
-        if (delta.content) {
-          if (inReasoningField) {
-            inReasoningField = false;
-            finishThinking();
+          if (delta.content || delta.tool_calls || reasoningChunk) {
+            if (!firstTokenTime) firstTokenTime = performance.now();
           }
 
-          let text = delta.content;
-
-          // Check if <think> tag opened in content
-          if (text.includes("<think>")) {
-            inThinkTag = true;
-            thinkingStartTime = performance.now();
-            thinkingBuffer = "";
-            const parts = text.split("<think>");
-            if (parts[0] && onToken) onToken(parts[0]);
-            text = parts[1] ?? "";
+          // 1. Handle dedicated reasoning_content chunk
+          if (reasoningChunk) {
+            if (!inReasoningField) {
+              inReasoningField = true;
+              thinkingStartTime = performance.now();
+              thinkingBuffer = "";
+            }
+            updateThinkingCommentary(reasoningChunk);
           }
 
-          // If currently inside <think> block
-          if (inThinkTag) {
-            if (text.includes("</think>")) {
-              const parts = text.split("</think>");
-              updateThinkingCommentary(parts[0] ?? "");
-              inThinkTag = false;
+          // 2. Handle content chunk
+          if (delta.content) {
+            if (inReasoningField) {
+              inReasoningField = false;
               finishThinking();
+            }
+
+            let text = delta.content;
+
+            // Check if <think> tag opened in content
+            if (text.includes("<think>")) {
+              inThinkTag = true;
+              thinkingStartTime = performance.now();
+              thinkingBuffer = "";
+              const parts = text.split("<think>");
+              if (parts[0] && onToken) onToken(parts[0]);
               text = parts[1] ?? "";
-            } else {
-              updateThinkingCommentary(text);
-              continue;
+            }
+
+            // If currently inside <think> block
+            if (inThinkTag) {
+              if (text.includes("</think>")) {
+                const parts = text.split("</think>");
+                updateThinkingCommentary(parts[0] ?? "");
+                inThinkTag = false;
+                finishThinking();
+                text = parts[1] ?? "";
+              } else {
+                updateThinkingCommentary(text);
+                continue;
+              }
+            }
+
+            fullContent += delta.content;
+            if (text) {
+              eventBus.emit({
+                type: "token.streamed",
+                sessionId,
+                token: text,
+                isReasoning: inReasoningField || inThinkTag,
+                timestamp: new Date().toISOString(),
+              });
+            }
+            if (onToken && text) {
+              const trimmed = fullContent.trimStart();
+              const isJsonToolCall =
+                trimmed.startsWith("{") ||
+                trimmed.startsWith("```json") ||
+                trimmed.startsWith('"Read"') ||
+                trimmed.startsWith('"Write"') ||
+                trimmed.startsWith('"Bash"') ||
+                trimmed.startsWith('"WebSearch"') ||
+                trimmed.startsWith('"GetTime"') ||
+                trimmed.startsWith('"get_time"') ||
+                trimmed.startsWith('"LSP_') ||
+                trimmed.startsWith('["');
+              if (!isJsonToolCall) {
+                onToken(text);
+              }
             }
           }
 
-          fullContent += delta.content;
-          if (text) {
-            eventBus.emit({
-              type: "token.streamed",
-              sessionId,
-              token: text,
-              isReasoning: inReasoningField || inThinkTag,
-              timestamp: new Date().toISOString(),
-            });
-          }
-          if (onToken && text) {
-            const trimmed = fullContent.trimStart();
-            const isJsonToolCall =
-              trimmed.startsWith("{") ||
-              trimmed.startsWith("```json") ||
-              trimmed.startsWith('"Read"') ||
-              trimmed.startsWith('"Write"') ||
-              trimmed.startsWith('"Bash"') ||
-              trimmed.startsWith('"WebSearch"') ||
-              trimmed.startsWith('"GetTime"') ||
-              trimmed.startsWith('"get_time"') ||
-              trimmed.startsWith('"LSP_') ||
-              trimmed.startsWith('["');
-            if (!isJsonToolCall) {
-              onToken(text);
+          if (delta.tool_calls) {
+            finishThinking();
+            for (const tc of delta.tool_calls) {
+              const idx = tc.index ?? 0;
+              const existing = toolCallsMap.get(idx) ?? {
+                id: tc.id,
+                name: "",
+                args: "",
+              };
+              if (tc.id) existing.id = tc.id;
+              if (tc.function?.name) existing.name += tc.function.name;
+              if (tc.function?.arguments) existing.args += tc.function.arguments;
+              toolCallsMap.set(idx, existing);
             }
           }
         }
-
-        if (delta.tool_calls) {
-          finishThinking();
-          for (const tc of delta.tool_calls) {
-            const idx = tc.index ?? 0;
-            const existing = toolCallsMap.get(idx) ?? {
-              id: tc.id,
-              name: "",
-              args: "",
-            };
-            if (tc.id) existing.id = tc.id;
-            if (tc.function?.name) existing.name += tc.function.name;
-            if (tc.function?.arguments) existing.args += tc.function.arguments;
-            toolCallsMap.set(idx, existing);
+      } catch (streamErr: any) {
+        finishThinking();
+        if (streamErr?.message?.includes("unexpected EOF") || streamErr?.message?.includes("terminated")) {
+          if (!fullContent && toolCallsMap.size === 0) {
+            throw new Error(`Ollama model stream closed unexpectedly (${streamErr.message}). Ensure Ollama is running and has sufficient VRAM.`);
           }
+        } else {
+          throw streamErr;
         }
       }
 

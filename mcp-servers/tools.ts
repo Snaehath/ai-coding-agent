@@ -28,6 +28,50 @@ const TOOL_SCHEMAS = [
       required: [],
     },
   },
+  {
+    name: "http_ping",
+    description:
+      "Sends an HTTP request to a URL and measures latency in ms, status code, and response size. Useful for testing APIs and dev servers.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: {
+          type: "string",
+          description: "Target URL to ping (e.g. http://localhost:3000 or https://httpbin.org/get).",
+        },
+        method: {
+          type: "string",
+          enum: ["GET", "HEAD"],
+          description: "HTTP method to use (defaults to GET).",
+        },
+        timeoutMs: {
+          type: "number",
+          description: "Timeout in milliseconds (defaults to 5000ms).",
+        },
+      },
+      required: ["url"],
+    },
+  },
+  {
+    name: "get_weather",
+    description:
+      "Fetches current live weather, temperature, humidity, and forecast for any city or location worldwide with zero API key required.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        location: {
+          type: "string",
+          description: "City name or location (e.g. 'Tokyo', 'London', 'Chennai', 'San Francisco').",
+        },
+        format: {
+          type: "string",
+          enum: ["summary", "detailed"],
+          description: "Weather format: 'summary' (concise 1-line) or 'detailed' (full breakdown). Defaults to 'summary'.",
+        },
+      },
+      required: ["location"],
+    },
+  },
 ];
 
 // Tool handlers
@@ -44,7 +88,6 @@ function handleListFiles(args: Record<string, any>): string {
   let rawDir = String(args.dir ?? ".").trim();
   let target = path.resolve(process.cwd(), rawDir);
 
-  // Normalize relative path if leading slash was included
   if (!fs.existsSync(target)) {
     const relative = rawDir.replace(/^[/\\]+/, "");
     if (relative) {
@@ -75,6 +118,75 @@ function handleListFiles(args: Record<string, any>): string {
     return `Contents of ${target}:\n${lines.join("\n")}`;
   } catch (err: any) {
     return `Error listing ${target}: ${err.message}`;
+  }
+}
+
+async function handleHttpPing(args: Record<string, any>): Promise<string> {
+  const targetUrl = String(args.url ?? "").trim();
+  if (!targetUrl) return "Error: url parameter is required.";
+  const method = (args.method ?? "GET").toUpperCase();
+  const timeoutMs = Number(args.timeoutMs) || 5000;
+
+  try {
+    const start = performance.now();
+    const res = await fetch(targetUrl, {
+      method,
+      signal: AbortSignal.timeout(timeoutMs),
+      headers: { "User-Agent": "AI-Coding-Agent-MCP/1.0" },
+    });
+    const latencyMs = Math.round(performance.now() - start);
+    const bodyText = await res.text();
+
+    return [
+      `🌐 HTTP Ping: ${targetUrl}`,
+      `• Status  : ${res.status} ${res.statusText}`,
+      `• Latency : ${latencyMs}ms`,
+      `• Method  : ${method}`,
+      `• Size    : ${bodyText.length} bytes`,
+      `• Type    : ${res.headers.get("content-type") ?? "unknown"}`,
+    ].join("\n");
+  } catch (err: any) {
+    return `HTTP Ping Error for "${targetUrl}": ${err.message}`;
+  }
+}
+
+async function handleGetWeather(args: Record<string, any>): Promise<string> {
+  const loc = String(args.location ?? "London").trim();
+  const format = args.format ?? "summary";
+  try {
+    const encoded = encodeURIComponent(loc);
+    if (format === "detailed") {
+      const res = await fetch(`https://wttr.in/${encoded}?format=j1`, {
+        headers: { "User-Agent": "curl/7.68.0" },
+        signal: AbortSignal.timeout(6000),
+      });
+      if (!res.ok) return `Weather lookup failed: HTTP ${res.status}`;
+      const data: any = await res.json();
+      const current = data.current_condition?.[0] || {};
+      const area = data.nearest_area?.[0]?.areaName?.[0]?.value || loc;
+      return [
+        `🌤️ Weather for ${area}:`,
+        `• Condition : ${current.weatherDesc?.[0]?.value ?? "Unknown"}`,
+        `• Temp      : ${current.temp_C}°C (${current.temp_F}°F)`,
+        `• Feels Like: ${current.FeelsLikeC}°C (${current.FeelsLikeF}°F)`,
+        `• Humidity  : ${current.humidity}%`,
+        `• Wind      : ${current.windspeedKmph} km/h ${current.winddir16Point ?? ""}`,
+        `• UV Index  : ${current.uvIndex ?? "N/A"}`,
+      ].join("\n");
+    } else {
+      const res = await fetch(
+        `https://wttr.in/${encoded}?format=%l:+%C,+%t+(feels+like+%f),+Humidity:+%h,+Wind:+%w`,
+        {
+          headers: { "User-Agent": "curl/7.68.0" },
+          signal: AbortSignal.timeout(6000),
+        },
+      );
+      if (!res.ok) return `Weather lookup failed: HTTP ${res.status}`;
+      const text = await res.text();
+      return `🌤️ ${text.trim()}`;
+    }
+  } catch (err: any) {
+    return `Error fetching weather for "${loc}": ${err.message}`;
   }
 }
 
@@ -129,6 +241,10 @@ for await (const line of rl) {
         text = handleGetTime();
       } else if (toolName === "list_files") {
         text = handleListFiles(toolArgs);
+      } else if (toolName === "http_ping") {
+        text = await handleHttpPing(toolArgs);
+      } else if (toolName === "get_weather") {
+        text = await handleGetWeather(toolArgs);
       } else {
         respondError(id, -32601, `Unknown tool: ${toolName}`);
         break;

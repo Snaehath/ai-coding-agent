@@ -60,12 +60,20 @@ export class PostgresAdapter implements DatabaseAdapter {
 
   async listTables(schema: string = "public"): Promise<TableInfo[]> {
     const sql = this.getSql();
-    const cleanSchema = schema.replace(/'/g, "''");
+    let cleanSchema = (schema || "").replace(/'/g, "''").trim();
+    if (["database", "db", "all", "*"].includes(cleanSchema.toLowerCase())) {
+      cleanSchema = "";
+    }
 
-    const rows: any[] = await sql.unsafe(`
+    const whereClause = cleanSchema
+      ? `t.table_schema = '${cleanSchema}'`
+      : `t.table_schema NOT IN ('pg_catalog', 'information_schema')`;
+
+    let rows: any[] = await sql.unsafe(`
       SELECT 
         t.table_name,
         t.table_type,
+        t.table_schema,
         GREATEST(
           COALESCE(s.n_live_tup, 0),
           COALESCE(c.reltuples::bigint, 0)
@@ -74,13 +82,35 @@ export class PostgresAdapter implements DatabaseAdapter {
       LEFT JOIN pg_namespace n ON n.nspname = t.table_schema
       LEFT JOIN pg_class c ON c.relname = t.table_name AND c.relnamespace = n.oid
       LEFT JOIN pg_stat_user_tables s ON s.relname = t.table_name AND s.schemaname = t.table_schema
-      WHERE t.table_schema = '${cleanSchema}'
+      WHERE ${whereClause}
         AND t.table_type = 'BASE TABLE'
       ORDER BY t.table_name;
     `);
 
+    // Fallback: if specific schema returned 0 rows, check all non-system schemas
+    if ((!rows || rows.length === 0) && cleanSchema && cleanSchema !== "public") {
+      rows = await sql.unsafe(`
+        SELECT 
+          t.table_name,
+          t.table_type,
+          t.table_schema,
+          GREATEST(
+            COALESCE(s.n_live_tup, 0),
+            COALESCE(c.reltuples::bigint, 0)
+          ) AS approx_rows
+        FROM information_schema.tables t
+        LEFT JOIN pg_namespace n ON n.nspname = t.table_schema
+        LEFT JOIN pg_class c ON c.relname = t.table_name AND c.relnamespace = n.oid
+        LEFT JOIN pg_stat_user_tables s ON s.relname = t.table_name AND s.schemaname = t.table_schema
+        WHERE t.table_schema NOT IN ('pg_catalog', 'information_schema')
+          AND t.table_type = 'BASE TABLE'
+        ORDER BY t.table_name;
+      `);
+    }
+
     const result: TableInfo[] = [];
     for (const r of rows || []) {
+      const tableSchema = r.table_schema || cleanSchema || "public";
       let count = Math.max(Number(r.approx_rows) || 0, 0);
       let isExact = false;
 
@@ -90,7 +120,7 @@ export class PostgresAdapter implements DatabaseAdapter {
         try {
           await sql.unsafe(`SET statement_timeout = 500;`);
           const countRes: any[] = await sql.unsafe(
-            `SELECT count(*) as c FROM "${cleanSchema}"."${r.table_name.replace(/"/g, '""')}";`
+            `SELECT count(*) as c FROM "${tableSchema}"."${r.table_name.replace(/"/g, '""')}";`
           );
           if (countRes && countRes[0]?.c !== undefined) {
             count = Number(countRes[0].c);

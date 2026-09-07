@@ -1,4 +1,5 @@
-import { type McpToolSchema } from "./mcp.ts";
+import { type McpToolSchema } from "./mcp-client.ts";
+export { type McpToolSchema };
 
 export interface ToolCatalogItem {
   name: string;

@@ -132,6 +132,22 @@ async function main() {
     process.env.THINKING_EFFORT = args[thinkingFlagIdx + 1].toLowerCase();
   }
 
+  // --persona / -persona / -P <name>
+  const personaFlagIdx = args.findIndex(
+    (a) => a === "--persona" || a === "-persona" || a === "-P",
+  );
+  if (personaFlagIdx !== -1 && args[personaFlagIdx + 1]) {
+    const { resolvePersona } = await import("./personas.ts");
+    const matched = resolvePersona(args[personaFlagIdx + 1]);
+    if (matched) {
+      process.env.PERSONA = matched.id;
+    } else {
+      process.stderr.write(
+        colors.yellow(`⚠️ Warning: Persona "${args[personaFlagIdx + 1]}" not found. Running with default persona.\n`),
+      );
+    }
+  }
+
   // --db <url_or_path> flag (Postgres, MySQL, SQLite)
   const dbFlagIdx = args.findIndex((a) => a === "--db");
   if (dbFlagIdx !== -1 && args[dbFlagIdx + 1]) {
@@ -210,6 +226,24 @@ async function main() {
     return;
   }
 
+  // --personas / --list-personas
+  if (args.includes("--personas") || args.includes("--list-personas")) {
+    const { loadAllPersonas } = await import("./personas.ts");
+    const personas = loadAllPersonas();
+    console.log("Available Personas:\n" + "─".repeat(68));
+    for (const p of personas) {
+      const activeBadge = process.env.PERSONA === p.id ? " [ACTIVE]" : "";
+      console.log(`• ${p.name} (${p.id})${activeBadge}`);
+      console.log(`  ${p.description}`);
+      if (p.allowedTools && p.allowedTools.length > 0) {
+        console.log(`  Focused Tools: ${p.allowedTools.join(", ")}`);
+      }
+      console.log();
+    }
+    console.log("Activate with: -P <name> or -persona <name> (e.g. -P dba)");
+    return;
+  }
+
   // --stats / --telemetry
   if (args.includes("--stats") || args.includes("--telemetry")) {
     const latest = getLatestSessionFile();
@@ -247,10 +281,44 @@ async function main() {
     return;
   }
 
+  // -instruct / --instruct / -instruction / --instruction / -f / --file <path>
+  const instructIdx = args.findIndex(
+    (a) =>
+      a === "-instruct" ||
+      a === "--instruct" ||
+      a === "-instruction" ||
+      a === "--instruction" ||
+      a === "-f" ||
+      a === "--file",
+  );
+  let instructContent = "";
+  if (instructIdx !== -1 && args[instructIdx + 1]) {
+    const filePath = path.resolve(process.cwd(), args[instructIdx + 1]);
+    try {
+      const file = Bun.file(filePath);
+      if (!(await file.exists())) {
+        process.stderr.write(`❌ Error: Instruction file not found: ${filePath}\n`);
+        process.exit(1);
+      }
+      instructContent = (await file.text()).trim();
+    } catch (err: any) {
+      process.stderr.write(`❌ Error reading instruction file: ${err.message}\n`);
+      process.exit(1);
+    }
+  }
+
   // -p "prompt"
   const pIdx = args.indexOf("-p");
-  if (pIdx !== -1 && args[pIdx + 1]) {
-    await runCliMode(args[pIdx + 1], { isContinue, resumeId }, imagePaths);
+  const pPrompt = pIdx !== -1 && args[pIdx + 1] ? args[pIdx + 1].trim() : "";
+
+  // Run in CLI mode if either an instruction file or prompt is provided
+  if (instructContent || pPrompt) {
+    const combinedPrompt = instructContent
+      ? pPrompt
+        ? `${instructContent}\n\nAdditional Note: ${pPrompt}`
+        : instructContent
+      : pPrompt;
+    await runCliMode(combinedPrompt, { isContinue, resumeId }, imagePaths);
     return;
   }
 
