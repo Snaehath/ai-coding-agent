@@ -440,6 +440,10 @@ export async function runReplMode(options: {
               `\n  ${colors.boldYellow("/db test")}                Test connection health & latency` +
               `\n  ${colors.boldYellow("/db tables")}              List available tables with row counts` +
               `\n  ${colors.boldYellow("/db schema [table]")}     Inspect table columns or full schema` +
+              `\n  ${colors.boldYellow("/db preview <table> [n]")} Preview sample rows (default 3)` +
+              `\n  ${colors.boldYellow("/db relationships [t]")}  Discover foreign key relationships` +
+              `\n  ${colors.boldYellow("/db search <col>")}        Find which tables have a column` +
+              `\n  ${colors.boldYellow("/db explain <sql>")}       Explain execution plan of a query` +
               `\n  ${colors.boldYellow("/db save <name> <url>")}   Save named connection profile` +
               `\n  ${colors.boldYellow("/db use <name>")}          Switch to saved profile` +
               `\n  ${colors.boldYellow("/db profiles")}            List all saved connection profiles` +
@@ -523,6 +527,114 @@ export async function runReplMode(options: {
               }
             } catch (err: any) {
               console.log(colors.red(`\n❌ Error fetching schema: ${err.message}\n`));
+            }
+            break;
+          }
+
+          if (sub === "preview") {
+            const adapter = dbManager.getActiveAdapter();
+            if (!adapter) {
+              console.log(colors.yellow("\n⚠️ No active database connection. Connect using '/db connect <url>'\n"));
+              break;
+            }
+            const [tbl, limitStr] = target.split(/\s+/, 2);
+            if (!tbl) {
+              console.log(colors.red("\nUsage: /db preview <table_name> [limit]\n"));
+              break;
+            }
+            const limit = limitStr ? parseInt(limitStr, 10) : 3;
+            try {
+              const rows = await adapter.previewTable(tbl, isNaN(limit) ? 3 : limit);
+              console.log(`\n${colors.bold(`Preview of '${tbl}' (${rows.length} row(s)):`)}`);
+              console.log(colors.gray("─".repeat(68)));
+              if (rows.length === 0) {
+                console.log(colors.gray("  (No rows found in table)"));
+              } else {
+                console.log(JSON.stringify(rows, null, 2));
+              }
+              console.log();
+            } catch (err: any) {
+              console.log(colors.red(`\n❌ Error previewing table: ${err.message}\n`));
+            }
+            break;
+          }
+
+          if (sub === "relationships" || sub === "fk" || sub === "relations") {
+            const adapter = dbManager.getActiveAdapter();
+            if (!adapter) {
+              console.log(colors.yellow("\n⚠️ No active database connection. Connect using '/db connect <url>'\n"));
+              break;
+            }
+            try {
+              const rels = await adapter.getRelationships(target || undefined);
+              console.log(`\n${colors.bold(`Table Relationships (${rels.length} constraint(s)):`)}`);
+              console.log(colors.gray("─".repeat(68)));
+              if (rels.length === 0) {
+                console.log(colors.gray("  (No foreign key relationships detected)"));
+              } else {
+                for (const r of rels) {
+                  console.log(
+                    `  • ${colors.boldCyan(r.fromTable)}.${colors.yellow(r.fromColumn)} ➔ ` +
+                    `${colors.boldCyan(r.toTable)}.${colors.yellow(r.toColumn)} ` +
+                    `${colors.gray(`(${r.constraintName})`)}`
+                  );
+                }
+              }
+              console.log();
+            } catch (err: any) {
+              console.log(colors.red(`\n❌ Error fetching relationships: ${err.message}\n`));
+            }
+            break;
+          }
+
+          if (sub === "search" || sub === "find-col") {
+            const adapter = dbManager.getActiveAdapter();
+            if (!adapter) {
+              console.log(colors.yellow("\n⚠️ No active database connection. Connect using '/db connect <url>'\n"));
+              break;
+            }
+            if (!target) {
+              console.log(colors.red("\nUsage: /db search <column_keyword>\n"));
+              break;
+            }
+            try {
+              const matches = await adapter.searchColumns(target);
+              console.log(`\n${colors.bold(`Columns matching '${target}' (${matches.length} found):`)}`);
+              console.log(colors.gray("─".repeat(68)));
+              if (matches.length === 0) {
+                console.log(colors.gray(`  (No columns matching '${target}')`));
+              } else {
+                for (const m of matches) {
+                  const pk = m.isPrimaryKey ? colors.boldYellow(" [PK]") : "";
+                  console.log(`  • ${colors.boldCyan(m.table)}.${colors.yellow(m.column)} ${colors.gray(`(${m.type})`)}${pk}`);
+                }
+              }
+              console.log();
+            } catch (err: any) {
+              console.log(colors.red(`\n❌ Error searching columns: ${err.message}\n`));
+            }
+            break;
+          }
+
+          if (sub === "explain") {
+            const adapter = dbManager.getActiveAdapter();
+            if (!adapter) {
+              console.log(colors.yellow("\n⚠️ No active database connection. Connect using '/db connect <url>'\n"));
+              break;
+            }
+            if (!target) {
+              console.log(colors.red("\nUsage: /db explain <SELECT query>\n"));
+              break;
+            }
+            try {
+              console.log(colors.dim(`\n  ⚡ Explaining query execution plan...`));
+              const plan = await adapter.explainQuery(target);
+              console.log(`\n${colors.bold("Execution Plan:")}`);
+              console.log(colors.gray("─".repeat(68)));
+              console.log(plan);
+              console.log();
+            } catch (err: any) {
+              console.log(colors.red(`\n❌ Error explaining query: ${err.message}\n`));
             }
             break;
           }

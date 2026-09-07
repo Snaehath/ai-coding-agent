@@ -117,6 +117,82 @@ const TOOL_SCHEMAS = [
     },
   },
   {
+    name: "preview_table",
+    description:
+      "Fetches 2-3 sample rows from a table to inspect real data patterns, date formats, and string enum values before writing queries. Strictly read-only.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        table_name: {
+          type: "string",
+          description: "Name of the table to preview sample rows from.",
+        },
+        limit: {
+          type: "number",
+          description: "Number of sample rows to fetch (default: 3, max: 10).",
+        },
+        schema: {
+          type: "string",
+          description: "Optional database schema.",
+        },
+      },
+      required: ["table_name"],
+    },
+  },
+  {
+    name: "get_table_relationships",
+    description:
+      "Discovers foreign key relationships and JOIN paths between tables. Use this before writing JOIN queries to know the exact matching foreign key columns. Strictly read-only.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        table_name: {
+          type: "string",
+          description: "Optional table name to filter relationships for.",
+        },
+        schema: {
+          type: "string",
+          description: "Optional database schema.",
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "search_columns",
+    description:
+      "Searches across all tables for columns matching a keyword (e.g. 'amount', 'email', 'date', 'status'). Quickly locates which table stores specific fields in 1 call. Strictly read-only.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Column name or keyword to search for across all tables.",
+        },
+        schema: {
+          type: "string",
+          description: "Optional database schema.",
+        },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "explain_query",
+    description:
+      "Runs EXPLAIN on a read-only query to inspect execution plan and index efficiency without executing heavy scans. Strictly read-only.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "The read-only SQL query to explain.",
+        },
+      },
+      required: ["query"],
+    },
+  },
+  {
     name: "get_connection_info",
     description:
       "Returns details about the active database connection (engine, database name, latency).",
@@ -230,6 +306,74 @@ async function handleReadQuery(args: Record<string, any>): Promise<string> {
   }
 }
 
+async function handlePreviewTable(args: Record<string, any>): Promise<string> {
+  const tableName = String(args.table_name || "").trim();
+  if (!tableName) return "Error: table_name parameter is required.";
+  const limit = Math.min(Math.max(Number(args.limit) || 3, 1), 10);
+
+  try {
+    const adapter = getAdapter();
+    const rows = await adapter.previewTable(tableName, limit, args.schema);
+    if (rows.length === 0) {
+      return `Table "${tableName}" is currently empty (0 rows).`;
+    }
+    const tableFormatted = formatMarkdownTable(rows);
+    return `Sample Data from "${tableName}" (${rows.length} rows):\n${tableFormatted}`;
+  } catch (err: any) {
+    return `Error previewing table "${tableName}": ${err.message}`;
+  }
+}
+
+async function handleGetRelationships(args: Record<string, any>): Promise<string> {
+  try {
+    const adapter = getAdapter();
+    const fks = await adapter.getRelationships(args.table_name, args.schema);
+    if (fks.length === 0) {
+      return args.table_name
+        ? `No foreign key relationships found for table "${args.table_name}".`
+        : `No foreign key relationships found in database schema.`;
+    }
+
+    const lines = fks.map(
+      (fk) => `  • ${fk.fromTable}.${fk.fromColumn} ──▶ ${fk.toTable}.${fk.toColumn}`
+    );
+    return `Foreign Key Relationships / JOIN Paths (${fks.length} total):\n${lines.join("\n")}`;
+  } catch (err: any) {
+    return `Error fetching relationships: ${err.message}`;
+  }
+}
+
+async function handleSearchColumns(args: Record<string, any>): Promise<string> {
+  const query = String(args.query || args.keyword || "").trim();
+  if (!query) return "Error: query parameter is required.";
+
+  try {
+    const adapter = getAdapter();
+    const matches = await adapter.searchColumns(query, args.schema);
+    if (matches.length === 0) {
+      return `No columns matching "${query}" were found.`;
+    }
+
+    const lines = matches.map((m) => `  • ${m.table}.${m.column} (${m.type})`);
+    return `Found ${matches.length} column(s) matching "${query}":\n${lines.join("\n")}`;
+  } catch (err: any) {
+    return `Error searching columns: ${err.message}`;
+  }
+}
+
+async function handleExplainQuery(args: Record<string, any>): Promise<string> {
+  const query = String(args.query || "").trim();
+  if (!query) return "Error: query parameter is required.";
+
+  try {
+    const adapter = getAdapter();
+    const plan = await adapter.explainQuery(query);
+    return `Query Execution Plan:\n\`\`\`text\n${plan}\n\`\`\``;
+  } catch (err: any) {
+    return `Error explaining query: ${err.message}`;
+  }
+}
+
 async function handleGetConnectionInfo(): Promise<string> {
   try {
     const adapter = getAdapter();
@@ -296,6 +440,14 @@ for await (const line of rl) {
           text = await handleGetDatabaseSchema(toolArgs);
         } else if (toolName === "read_query") {
           text = await handleReadQuery(toolArgs);
+        } else if (toolName === "preview_table") {
+          text = await handlePreviewTable(toolArgs);
+        } else if (toolName === "get_table_relationships") {
+          text = await handleGetRelationships(toolArgs);
+        } else if (toolName === "search_columns") {
+          text = await handleSearchColumns(toolArgs);
+        } else if (toolName === "explain_query") {
+          text = await handleExplainQuery(toolArgs);
         } else if (toolName === "get_connection_info") {
           text = await handleGetConnectionInfo();
         } else {

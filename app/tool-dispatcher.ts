@@ -538,6 +538,10 @@ export function formatToolSummary(
           if (mcpMatch.localName === "describe_table") return `📋 PostgreSQL: Describing table ${args.table_name ?? ""}`;
           if (mcpMatch.localName === "get_database_schema") return `🗄️ PostgreSQL: Inspecting DB schema`;
           if (mcpMatch.localName === "read_query") return `🔍 PostgreSQL Query: "${String(args.query ?? "").slice(0, 45).replace(/\s+/g, " ")}"`;
+          if (mcpMatch.localName === "preview_table") return `👁️ Database: Previewing table ${args.table_name ?? ""} (${args.limit ?? 3} rows)`;
+          if (mcpMatch.localName === "get_table_relationships") return `🔗 Database: Inspecting relationships ${args.table_name ? `for ${args.table_name}` : `(all tables)`}`;
+          if (mcpMatch.localName === "search_columns") return `🔎 Database: Searching columns matching "${args.keyword ?? ""}"`;
+          if (mcpMatch.localName === "explain_query") return `⚡ Database: Explaining query "${String(args.query ?? "").slice(0, 40).replace(/\s+/g, " ")}"`;
         }
         return `🔌 MCP [${mcpMatch.serverId}]: ${mcpMatch.localName}`;
       }
@@ -586,8 +590,10 @@ export function extractToolTarget(
       if (toolName.startsWith("LSP_")) return String(args.symbol ?? filePath);
       if (mcpMatch) {
         if (mcpMatch.serverId === "postgres") {
-          if (mcpMatch.localName === "read_query") return String(args.query ?? "");
-          if (mcpMatch.localName === "describe_table") return String(args.table_name ?? "");
+          if (mcpMatch.localName === "read_query" || mcpMatch.localName === "explain_query") return String(args.query ?? "");
+          if (mcpMatch.localName === "describe_table" || mcpMatch.localName === "preview_table") return String(args.table_name ?? "");
+          if (mcpMatch.localName === "get_table_relationships") return String(args.table_name ?? "all");
+          if (mcpMatch.localName === "search_columns") return String(args.keyword ?? "");
         }
         return mcpMatch.localName;
       }

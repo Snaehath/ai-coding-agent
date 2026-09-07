@@ -179,6 +179,10 @@ async function main() {
       console.log("  bun app/main.ts db save <name> <url>    Save named connection profile");
       console.log("  bun app/main.ts db tables               List tables in active database");
       console.log("  bun app/main.ts db schema [table]       View column schema or overview");
+      console.log("  bun app/main.ts db preview <table> [n]  Preview sample rows (default 3)");
+      console.log("  bun app/main.ts db relationships [tbl]  Discover foreign key relationships");
+      console.log("  bun app/main.ts db search <col_keyword> Search for columns across tables");
+      console.log("  bun app/main.ts db explain <sql_query>  Inspect execution plan of query");
       console.log("  bun app/main.ts db test                 Test connection latency & health\n");
       return;
     }
@@ -260,6 +264,108 @@ async function main() {
         console.log();
       } else {
         console.log("\n" + (await adapter.getSchema()) + "\n");
+      }
+      return;
+    }
+
+    if (sub === "preview") {
+      await dbManager.autoConnect();
+      const adapter = dbManager.getActiveAdapter();
+      if (!adapter) {
+        console.log("No active database. Run: bun app/main.ts db connect <url>");
+        return;
+      }
+      const [tbl, limitStr] = target.split(/\s+/, 2);
+      if (!tbl) {
+        console.log("Usage: bun app/main.ts db preview <table_name> [limit]");
+        return;
+      }
+      const limit = limitStr ? parseInt(limitStr, 10) : 3;
+      try {
+        const rows = await adapter.previewTable(tbl, isNaN(limit) ? 3 : limit);
+        console.log(`\nPreview of '${tbl}' (${rows.length} row(s)):\n` + "─".repeat(68));
+        if (rows.length === 0) {
+          console.log("  (No rows found in table)");
+        } else {
+          console.log(JSON.stringify(rows, null, 2));
+        }
+        console.log();
+      } catch (err: any) {
+        console.log(`\n❌ Error: ${err.message}\n`);
+      }
+      return;
+    }
+
+    if (sub === "relationships" || sub === "fk" || sub === "relations") {
+      await dbManager.autoConnect();
+      const adapter = dbManager.getActiveAdapter();
+      if (!adapter) {
+        console.log("No active database. Run: bun app/main.ts db connect <url>");
+        return;
+      }
+      try {
+        const rels = await adapter.getRelationships(target || undefined);
+        console.log(`\nTable Relationships (${rels.length} constraint(s)):\n` + "─".repeat(68));
+        if (rels.length === 0) {
+          console.log("  (No foreign key relationships detected)");
+        } else {
+          for (const r of rels) {
+            console.log(`  • ${r.fromTable}.${r.fromColumn} ➔ ${r.toTable}.${r.toColumn} (${r.constraintName})`);
+          }
+        }
+        console.log();
+      } catch (err: any) {
+        console.log(`\n❌ Error: ${err.message}\n`);
+      }
+      return;
+    }
+
+    if (sub === "search" || sub === "find-col") {
+      await dbManager.autoConnect();
+      const adapter = dbManager.getActiveAdapter();
+      if (!adapter) {
+        console.log("No active database. Run: bun app/main.ts db connect <url>");
+        return;
+      }
+      if (!target) {
+        console.log("Usage: bun app/main.ts db search <column_keyword>");
+        return;
+      }
+      try {
+        const matches = await adapter.searchColumns(target);
+        console.log(`\nColumns matching '${target}' (${matches.length} found):\n` + "─".repeat(68));
+        if (matches.length === 0) {
+          console.log(`  (No columns matching '${target}')`);
+        } else {
+          for (const m of matches) {
+            const pk = m.isPrimaryKey ? " [PK]" : "";
+            console.log(`  • ${m.table}.${m.column} (${m.type})${pk}`);
+          }
+        }
+        console.log();
+      } catch (err: any) {
+        console.log(`\n❌ Error: ${err.message}\n`);
+      }
+      return;
+    }
+
+    if (sub === "explain") {
+      await dbManager.autoConnect();
+      const adapter = dbManager.getActiveAdapter();
+      if (!adapter) {
+        console.log("No active database. Run: bun app/main.ts db connect <url>");
+        return;
+      }
+      if (!target) {
+        console.log("Usage: bun app/main.ts db explain <sql_query>");
+        return;
+      }
+      try {
+        const plan = await adapter.explainQuery(target);
+        console.log("\nExecution Plan:\n" + "─".repeat(68));
+        console.log(plan + "\n");
+      } catch (err: any) {
+        console.log(`\n❌ Error: ${err.message}\n`);
       }
       return;
     }

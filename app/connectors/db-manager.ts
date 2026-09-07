@@ -246,7 +246,7 @@ export class DatabaseManager {
       lines.push(`     (No user tables found in database)`);
     }
 
-    lines.push(`\n🔌 Read-only AI database tools (list_tables, describe_table, read_query) are active!`);
+    lines.push(`\n🔌 Read-only AI database tools (list_tables, describe_table, preview_table, get_table_relationships, search_columns, explain_query, read_query) are active!`);
     return lines.join("\n");
   }
 }

@@ -4,6 +4,8 @@ import type {
   ConnectionTestResult,
   TableInfo,
   ColumnInfo,
+  TableRelationship,
+  ColumnSearchResult,
 } from "../types.ts";
 import { validateReadOnlyQuery } from "../safety.ts";
 
@@ -178,6 +180,84 @@ export class MysqlAdapter implements DatabaseAdapter {
     const limit = Math.min(Math.max(maxRows, 1), 200);
 
     return Array.isArray(rows) ? rows.slice(0, limit) : [];
+  }
+
+  async previewTable(tableName: string, limit: number = 3, schema?: string): Promise<Record<string, any>[]> {
+    const sql = this.getSql();
+    const cleanTable = tableName.replace(/`/g, "``");
+    const cleanSchema = (schema || "").replace(/`/g, "``");
+    const dbPrefix = cleanSchema ? `\`${cleanSchema}\`.` : "";
+    const lim = Math.min(Math.max(limit, 1), 10);
+
+    const rows = await sql.unsafe(`SELECT * FROM ${dbPrefix}\`${cleanTable}\` LIMIT ${lim};`);
+    return Array.isArray(rows) ? rows : [];
+  }
+
+  async getRelationships(tableName?: string, schema?: string): Promise<TableRelationship[]> {
+    const sql = this.getSql();
+    const cleanSchema = (schema || "").replace(/'/g, "''");
+    const schemaFilter = cleanSchema
+      ? `AND table_schema = '${cleanSchema}'`
+      : "AND table_schema = DATABASE()";
+    const filter = tableName
+      ? `AND (table_name = '${tableName.replace(/'/g, "''")}' OR referenced_table_name = '${tableName.replace(/'/g, "''")}')`
+      : "";
+
+    const rows: any[] = await sql.unsafe(`
+      SELECT 
+        table_name AS from_table,
+        column_name AS from_column,
+        referenced_table_name AS to_table,
+        referenced_column_name AS to_column,
+        constraint_name
+      FROM information_schema.key_column_usage
+      WHERE referenced_table_name IS NOT NULL
+        ${schemaFilter}
+        ${filter}
+      ORDER BY table_name, column_name;
+    `);
+
+    return (rows || []).map((r) => ({
+      fromTable: r.from_table,
+      fromColumn: r.from_column,
+      toTable: r.to_table,
+      toColumn: r.to_column,
+      constraintName: r.constraint_name,
+    }));
+  }
+
+  async searchColumns(query: string, schema?: string): Promise<ColumnSearchResult[]> {
+    const sql = this.getSql();
+    const cleanSchema = (schema || "").replace(/'/g, "''");
+    const cleanQuery = query.replace(/'/g, "''");
+    const schemaFilter = cleanSchema
+      ? `AND table_schema = '${cleanSchema}'`
+      : "AND table_schema = DATABASE()";
+
+    const rows: any[] = await sql.unsafe(`
+      SELECT table_name, column_name, column_type as data_type
+      FROM information_schema.columns
+      WHERE column_name LIKE '%${cleanQuery}%'
+        ${schemaFilter}
+      ORDER BY table_name, ordinal_position;
+    `);
+
+    return (rows || []).map((r) => ({
+      table: r.table_name,
+      column: r.column_name,
+      type: r.data_type,
+    }));
+  }
+
+  async explainQuery(rawSql: string): Promise<string> {
+    const validation = validateReadOnlyQuery(rawSql);
+    if (!validation.valid) {
+      throw new Error(validation.error);
+    }
+
+    const sql = this.getSql();
+    const rows: any[] = await sql.unsafe(`EXPLAIN ${validation.cleanQuery}`);
+    return JSON.stringify(rows, null, 2);
   }
 
   async disconnect(): Promise<void> {

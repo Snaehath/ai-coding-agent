@@ -6,6 +6,8 @@ import type {
   ConnectionTestResult,
   TableInfo,
   ColumnInfo,
+  TableRelationship,
+  ColumnSearchResult,
 } from "../types.ts";
 import { validateReadOnlyQuery } from "../safety.ts";
 
@@ -149,6 +151,76 @@ export class SqliteAdapter implements DatabaseAdapter {
     const limit = Math.min(Math.max(maxRows, 1), 200);
 
     return Array.isArray(rows) ? rows.slice(0, limit) : [];
+  }
+
+  async previewTable(tableName: string, limit: number = 3): Promise<Record<string, any>[]> {
+    const db = this.getDb();
+    const cleanTable = tableName.replace(/"/g, '""');
+    const lim = Math.min(Math.max(limit, 1), 10);
+    const rows = db.query(`SELECT * FROM "${cleanTable}" LIMIT ${lim};`).all() as Record<string, any>[];
+    return Array.isArray(rows) ? rows : [];
+  }
+
+  async getRelationships(tableName?: string): Promise<TableRelationship[]> {
+    const db = this.getDb();
+    const tables = tableName ? [{ name: tableName }] : await this.listTables();
+    const results: TableRelationship[] = [];
+
+    for (const t of tables) {
+      try {
+        const cleanTable = t.name.replace(/"/g, '""');
+        const fks = db.query(`PRAGMA foreign_key_list("${cleanTable}");`).all() as any[];
+        for (const fk of fks || []) {
+          results.push({
+            fromTable: t.name,
+            fromColumn: fk.from,
+            toTable: fk.table,
+            toColumn: fk.to,
+          });
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    return results;
+  }
+
+  async searchColumns(query: string): Promise<ColumnSearchResult[]> {
+    const db = this.getDb();
+    const tables = await this.listTables();
+    const cleanQuery = query.toLowerCase().trim();
+    const results: ColumnSearchResult[] = [];
+
+    for (const t of tables) {
+      try {
+        const cols = await this.describeTable(t.name);
+        for (const c of cols) {
+          if (c.name.toLowerCase().includes(cleanQuery)) {
+            results.push({
+              table: t.name,
+              column: c.name,
+              type: c.type,
+            });
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    return results;
+  }
+
+  async explainQuery(rawSql: string): Promise<string> {
+    const validation = validateReadOnlyQuery(rawSql);
+    if (!validation.valid) {
+      throw new Error(validation.error);
+    }
+
+    const db = this.getDb();
+    const rows = db.query(`EXPLAIN QUERY PLAN ${validation.cleanQuery}`).all() as any[];
+    return (rows || []).map((r) => `[id:${r.id}, parent:${r.parent}] ${r.detail}`).join("\n");
   }
 
   async disconnect(): Promise<void> {

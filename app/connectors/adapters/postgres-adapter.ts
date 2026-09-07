@@ -4,6 +4,8 @@ import type {
   ConnectionTestResult,
   TableInfo,
   ColumnInfo,
+  TableRelationship,
+  ColumnSearchResult,
 } from "../types.ts";
 import { validateReadOnlyQuery } from "../safety.ts";
 
@@ -198,6 +200,83 @@ export class PostgresAdapter implements DatabaseAdapter {
     const limit = Math.min(Math.max(maxRows, 1), 200);
 
     return Array.isArray(rows) ? rows.slice(0, limit) : [];
+  }
+
+  async previewTable(tableName: string, limit: number = 3, schema: string = "public"): Promise<Record<string, any>[]> {
+    const sql = this.getSql();
+    const cleanTable = tableName.replace(/'/g, "''");
+    const cleanSchema = schema.replace(/'/g, "''");
+    const lim = Math.min(Math.max(limit, 1), 10);
+
+    const rows = await sql.unsafe(`SELECT * FROM "${cleanSchema}"."${cleanTable}" LIMIT ${lim};`);
+    return Array.isArray(rows) ? rows : [];
+  }
+
+  async getRelationships(tableName?: string, schema: string = "public"): Promise<TableRelationship[]> {
+    const sql = this.getSql();
+    const cleanSchema = schema.replace(/'/g, "''");
+    const filter = tableName
+      ? `AND (tc.table_name = '${tableName.replace(/'/g, "''")}' OR ccu.table_name = '${tableName.replace(/'/g, "''")}')`
+      : "";
+
+    const rows: any[] = await sql.unsafe(`
+      SELECT
+        tc.table_name AS from_table,
+        kcu.column_name AS from_column,
+        ccu.table_name AS to_table,
+        ccu.column_name AS to_column,
+        tc.constraint_name
+      FROM information_schema.table_constraints tc
+      JOIN information_schema.key_column_usage kcu
+        ON tc.constraint_name = kcu.constraint_name
+        AND tc.table_schema = kcu.table_schema
+      JOIN information_schema.constraint_column_usage ccu
+        ON ccu.constraint_name = tc.constraint_name
+        AND ccu.table_schema = tc.table_schema
+      WHERE tc.constraint_type = 'FOREIGN KEY'
+        AND tc.table_schema = '${cleanSchema}'
+        ${filter}
+      ORDER BY tc.table_name, kcu.column_name;
+    `);
+
+    return (rows || []).map((r) => ({
+      fromTable: r.from_table,
+      fromColumn: r.from_column,
+      toTable: r.to_table,
+      toColumn: r.to_column,
+      constraintName: r.constraint_name,
+    }));
+  }
+
+  async searchColumns(query: string, schema: string = "public"): Promise<ColumnSearchResult[]> {
+    const sql = this.getSql();
+    const cleanSchema = schema.replace(/'/g, "''");
+    const cleanQuery = query.replace(/'/g, "''");
+
+    const rows: any[] = await sql.unsafe(`
+      SELECT table_name, column_name, data_type
+      FROM information_schema.columns
+      WHERE table_schema = '${cleanSchema}'
+        AND column_name ILIKE '%${cleanQuery}%'
+      ORDER BY table_name, ordinal_position;
+    `);
+
+    return (rows || []).map((r) => ({
+      table: r.table_name,
+      column: r.column_name,
+      type: r.data_type,
+    }));
+  }
+
+  async explainQuery(rawSql: string): Promise<string> {
+    const validation = validateReadOnlyQuery(rawSql);
+    if (!validation.valid) {
+      throw new Error(validation.error);
+    }
+
+    const sql = this.getSql();
+    const rows: any[] = await sql.unsafe(`EXPLAIN (FORMAT TEXT) ${validation.cleanQuery}`);
+    return (rows || []).map((r) => r["QUERY PLAN"] || Object.values(r)[0]).join("\n");
   }
 
   async disconnect(): Promise<void> {

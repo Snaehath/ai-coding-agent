@@ -29,6 +29,20 @@ export interface ConnectionTestResult {
   error?: string;
 }
 
+export interface TableRelationship {
+  fromTable: string;
+  fromColumn: string;
+  toTable: string;
+  toColumn: string;
+  constraintName?: string;
+}
+
+export interface ColumnSearchResult {
+  table: string;
+  column: string;
+  type: string;
+}
+
 export interface DatabaseAdapter {
   readonly engine: DatabaseEngine;
   readonly connectionString: string;
@@ -37,6 +51,10 @@ export interface DatabaseAdapter {
   describeTable(tableName: string, schema?: string): Promise<ColumnInfo[]>;
   getSchema(schema?: string): Promise<string>;
   readQuery(sql: string, maxRows?: number): Promise<Record<string, any>[]>;
+  previewTable(tableName: string, limit?: number, schema?: string): Promise<Record<string, any>[]>;
+  getRelationships(tableName?: string, schema?: string): Promise<TableRelationship[]>;
+  searchColumns(query: string, schema?: string): Promise<ColumnSearchResult[]>;
+  explainQuery(sql: string): Promise<string>;
   disconnect(): Promise<void>;
 }
 
