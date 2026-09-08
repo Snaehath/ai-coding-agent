@@ -254,9 +254,9 @@ export function inspectConfig(): string {
       `  • Registered Models (${models.length})  : ${models.map((m) => m.name).join(", ")}`,
       `  • Permission Rules (${perms.rules.length})   : Default Action: ${perms.defaultAction}`,
       `  • Registered Skills (${skills.length})  : ${skills.map((s) => s.name).join(", ") || "None"}`,
-      `  • Pre-Tool Hooks           : ${(hooks.pre_tool_call || []).length} configured`,
-      `  • Post-Tool Hooks          : ${(hooks.post_tool_call || []).length} configured`,
-      `  • Session-End Hooks        : ${(hooks.on_session_end || []).length} configured`,
+      `  • Pre-Tool Hooks           : ${hooks.hooks.filter((h) => h.event === "pre_tool_call").length} configured`,
+      `  • Post-Tool Hooks          : ${hooks.hooks.filter((h) => h.event === "post_tool_call").length} configured`,
+      `  • Session-End Hooks        : ${hooks.hooks.filter((h) => h.event === "on_session_end").length} configured`,
     ].join("\n");
   } catch (e: any) {
     return `Error inspecting configuration: ${e.message}`;

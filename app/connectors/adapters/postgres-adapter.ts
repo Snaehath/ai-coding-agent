@@ -226,10 +226,21 @@ export class PostgresAdapter implements DatabaseAdapter {
     }
 
     const sql = this.getSql();
-    const rows: any[] = await sql.unsafe(validation.cleanQuery);
     const limit = Math.min(Math.max(maxRows, 1), 200);
 
-    return Array.isArray(rows) ? rows.slice(0, limit) : [];
+    // Defense-in-depth: run inside a read-only transaction.
+    // Even if the keyword guard above is bypassed (e.g. via pg_write_file, dblink,
+    // or a CTE-masked mutation), Postgres will reject any write attempt at the
+    // engine level and the ROLLBACK ensures no state is left behind.
+    await sql.unsafe("BEGIN;");
+    try {
+      await sql.unsafe("SET TRANSACTION READ ONLY;");
+      const rows: any[] = await sql.unsafe(validation.cleanQuery);
+      return Array.isArray(rows) ? rows.slice(0, limit) : [];
+    } finally {
+      // Always rollback — we never commit a read-only session.
+      try { await sql.unsafe("ROLLBACK;"); } catch { /* ignore */ }
+    }
   }
 
   async previewTable(tableName: string, limit: number = 3, schema: string = "public"): Promise<Record<string, any>[]> {

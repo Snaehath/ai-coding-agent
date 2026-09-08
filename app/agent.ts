@@ -50,6 +50,76 @@ const TOOL_CALL_OBJ_RE =
 
 const MCP_CONFIG_PATH = path.resolve(process.cwd(), ".agents", "mcp.json");
 
+// ── Module-level singletons ───────────────────────────────────────────────────
+
+// OpenAI client singleton — recreated only when provider env vars change.
+let _llmInstance: OpenAI | null = null;
+let _llmKey = "";
+
+function getLlmClient(): OpenAI {
+  const apiKey = process.env.OPENROUTER_API_KEY ?? "";
+  const baseURL = process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1";
+  const cacheKey = `${apiKey}|${baseURL}`;
+  if (!_llmInstance || cacheKey !== _llmKey) {
+    _llmInstance = new OpenAI({ apiKey, baseURL });
+    _llmKey = cacheKey;
+  }
+  return _llmInstance;
+}
+
+// MCP client singleton map — child processes started once per process lifetime.
+let _mcpClients: Map<string, McpClient> | null = null;
+
+async function getMcpClients(): Promise<Map<string, McpClient>> {
+  if (_mcpClients !== null) return _mcpClients;
+  _mcpClients = await loadMcpClients();
+  return _mcpClients;
+}
+
+/** Call this on exit / SIGINT so MCP child processes are cleaned up. */
+export async function closeMcpClients(): Promise<void> {
+  if (!_mcpClients) return;
+  for (const client of _mcpClients.values()) client.close();
+  _mcpClients = null;
+}
+
+// Permission config cached with mtime dirty-check.
+const PERM_CONFIG_PATH = path.resolve(process.cwd(), ".agents", "permissions.json");
+let _permConfig: ReturnType<typeof loadPermissionConfig> | null = null;
+let _permConfigMtime = 0;
+
+function getCachedPermConfig(): ReturnType<typeof loadPermissionConfig> {
+  try {
+    const mtime = fs.statSync(PERM_CONFIG_PATH).mtimeMs;
+    if (!_permConfig || mtime !== _permConfigMtime) {
+      _permConfig = loadPermissionConfig();
+      _permConfigMtime = mtime;
+    }
+  } catch {
+    // File doesn't exist — load with defaults (loadPermissionConfig handles missing file)
+    if (!_permConfig) _permConfig = loadPermissionConfig();
+  }
+  return _permConfig;
+}
+
+// Hooks config cached with mtime dirty-check.
+const HOOKS_CONFIG_PATH = path.resolve(process.cwd(), ".agents", "hooks.json");
+let _hooksConfig: ReturnType<typeof loadHooksConfig> | null = null;
+let _hooksConfigMtime = 0;
+
+function getCachedHooksConfig(): ReturnType<typeof loadHooksConfig> {
+  try {
+    const mtime = fs.statSync(HOOKS_CONFIG_PATH).mtimeMs;
+    if (!_hooksConfig || mtime !== _hooksConfigMtime) {
+      _hooksConfig = loadHooksConfig();
+      _hooksConfigMtime = mtime;
+    }
+  } catch {
+    if (!_hooksConfig) _hooksConfig = loadHooksConfig();
+  }
+  return _hooksConfig;
+}
+
 // ANSI color helpers
 const colors = {
   dim: (s: string) => `\x1b[2m${s}\x1b[0m`,
@@ -390,17 +460,14 @@ export async function runAgentMode(
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) throw new Error("OPENROUTER_API_KEY is not set");
 
-  const llm = new OpenAI({
-    apiKey,
-    baseURL: process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1",
-  });
+  const llm = getLlmClient();
   const model = process.env.MODEL ?? "granite4.2:3b";
   const modelInfo = resolveModel(model);
   const agentName =
     modelInfo.name || process.env.AGENT_NAME || "an expert coding assistant";
 
   // Discover and merge MCP tools
-  const mcpClients = await loadMcpClients();
+  const mcpClients = await getMcpClients();
   const mcpTools: McpToolSchema[] = [];
   for (const c of mcpClients.values()) mcpTools.push(...c.getTools());
   
@@ -574,9 +641,9 @@ Use tools to answer requests:
   let turns = 0;
 
   // Load permission, hooks, and security guardrail configuration
-  const permConfig = loadPermissionConfig();
+  const permConfig = getCachedPermConfig();
   const runtimePermCache = new Map<string, PermissionAction>();
-  const hooksConfig = loadHooksConfig();
+  const hooksConfig = getCachedHooksConfig();
   const loopDetector = createToolLoopDetector(3);
   const sessionStartTime = performance.now();
   const sessionId = sessionFilePath

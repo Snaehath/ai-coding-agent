@@ -23,6 +23,15 @@ const FORBIDDEN_KEYWORDS = [
   /\binto\b\s+dumpfile/i,
   /\bload_file\b/i,
   /\bpragma\s+writable_schema\b/i,
+  // PostgreSQL-specific bypass vectors (file I/O, cross-db writes, large objects)
+  /\bpg_write_file\b/i,
+  /\bpg_read_binary_file\b/i,
+  /\bdblink\b/i,
+  /\bdblink_exec\b/i,
+  /\blo_import\b/i,
+  /\blo_export\b/i,
+  /\bpg_ls_dir\b/i,
+  /\bcopy_file_range\b/i,
 ];
 
 export function validateReadOnlyQuery(rawQuery: string): {

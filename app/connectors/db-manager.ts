@@ -22,6 +22,25 @@ export class DatabaseManager {
   private activeInfo: ConnectionTestResult | null = null;
   private activeUrlOrPath: string = "";
 
+  /**
+   * Resolve the actual connection URL for a saved profile.
+   * Prefers `envKey` (looks up from process.env) over the inline `url` field.
+   * Throws if neither is set or the env var is missing.
+   */
+  private resolveConnectionUrl(entry: { envKey?: string; url?: string }): string {
+    if (entry.envKey) {
+      const resolved = process.env[entry.envKey];
+      if (!resolved) {
+        throw new Error(
+          `Connection env var "${entry.envKey}" is not set. Add it to your .env file.`,
+        );
+      }
+      return resolved;
+    }
+    if (entry.url) return entry.url;
+    throw new Error("Connection entry has neither envKey nor url set.");
+  }
+
   // Auto-detect engine from connection string or file path
   detectEngine(urlOrPath: string): DatabaseEngine {
     const trimmed = urlOrPath.trim();
@@ -171,7 +190,14 @@ export class DatabaseManager {
       };
     }
 
-    const res = await this.connect(entry.url);
+    let url: string;
+    try {
+      url = this.resolveConnectionUrl(entry);
+    } catch (e: any) {
+      return { ok: false, latencyMs: 0, engine: entry.engine ?? "postgres", tableCount: 0, error: e.message };
+    }
+
+    const res = await this.connect(url);
     if (res.ok) {
       config.active = name;
       this.saveConfig(config);
@@ -183,7 +209,12 @@ export class DatabaseManager {
   async autoConnect(): Promise<ConnectionTestResult | null> {
     const config = this.loadConfig();
     if (config.active && config.connections[config.active]) {
-      return await this.connect(config.connections[config.active].url);
+      try {
+        const url = this.resolveConnectionUrl(config.connections[config.active]);
+        return await this.connect(url);
+      } catch {
+        // If env var is missing, fall through to DATABASE_URL fallback
+      }
     }
 
     const envUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL;
@@ -197,12 +228,16 @@ export class DatabaseManager {
   private recordActiveConnection(url: string, engine: DatabaseEngine): void {
     try {
       const config = this.loadConfig();
-      // If matches any named connection, update active key
+      // Match against resolved URL for each named profile
       let matchedName: string | undefined;
       for (const [name, c] of Object.entries(config.connections)) {
-        if (c.url === url) {
-          matchedName = name;
-          break;
+        try {
+          if (this.resolveConnectionUrl(c) === url) {
+            matchedName = name;
+            break;
+          }
+        } catch {
+          // env var not set for this profile — skip
         }
       }
       if (matchedName) {
@@ -535,9 +570,11 @@ export class DatabaseManager {
         for (const [pName, pData] of entries) {
           const isActive = cfg.active === pName;
           const badge = isActive ? ANSI.boldGreen(" [ACTIVE]") : "";
-          const masked = pData.url.replace(/:([^@/]+)@/, ":****@");
+          const displayUrl = pData.envKey
+            ? `env:${pData.envKey}`
+            : (pData.url ?? "(no url)").replace(/:([^@/]+)@/, ":****@");
           console.log(`• ${ANSI.boldCyan(pName)}${badge} ${ANSI.gray(`(${pData.engine || "db"})`)}`);
-          console.log(`  URL: ${ANSI.dim(masked)}`);
+          console.log(`  URL: ${ANSI.dim(displayUrl)}`);
           if (pData.description) console.log(`  Desc: ${ANSI.gray(pData.description)}`);
         }
       }

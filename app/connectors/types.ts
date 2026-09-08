@@ -62,7 +62,10 @@ export interface DatabaseAdapter {
 export interface SavedConnectionsConfig {
   active?: string;
   connections: Record<string, {
-    url: string;
+    /** Env variable name holding the connection URL (preferred over inline url). */
+    envKey?: string;
+    /** Plaintext URL — only kept for backward compat; prefer envKey. */
+    url?: string;
     engine?: DatabaseEngine;
     description?: string;
     addedAt?: string;

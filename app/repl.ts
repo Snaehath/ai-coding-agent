@@ -1,6 +1,6 @@
 import path from "node:path";
 import * as readline from "node:readline";
-import { runAgentMode } from "./agent.ts";
+import { runAgentMode, closeMcpClients } from "./agent.ts";
 import {
   createNewSessionPath,
   getSessionFileByID,
@@ -46,6 +46,7 @@ export const colors = {
   boldCyan: (s: string) => `\x1b[1;36m${s}\x1b[0m`,
   boldGreen: (s: string) => `\x1b[1;32m${s}\x1b[0m`,
   boldYellow: (s: string) => `\x1b[1;33m${s}\x1b[0m`,
+  boldMagenta: (s: string) => `\x1b[1;35m${s}\x1b[0m`,
 };
 
 // Interactive terminal REPL mode
@@ -78,6 +79,38 @@ export async function runReplMode(options: {
   const sessionId = () => path.basename(currentSessionFile, ".jsonl");
   const currentModel = () => process.env.MODEL ?? "anthropic/claude-haiku-4.5";
   const sessionStartTime = Date.now();
+
+  // Derive a short display name for the prompt status line (e.g. "qwen2.5:7b" -> "qwen")
+  const modelShortName = () => {
+    const m = currentModel();
+    const shortNames: Record<string, string> = {
+      granite: "granite", qwen: "qwen", gemma: "gemma",
+      ministral: "ministral", lfm: "lfm", haiku: "haiku", claude: "claude",
+    };
+    for (const [key, label] of Object.entries(shortNames)) {
+      if (m.toLowerCase().includes(key)) return label;
+    }
+    return m.split(":")[0].split("/").pop() ?? m;
+  };
+
+  // Build the rich status line shown before the prompt
+  const buildStatusLine = () => {
+    const model = modelShortName();
+    const persona = process.env.PERSONA ? colors.cyan(process.env.PERSONA) : colors.gray("default");
+    const thinking = process.env.THINKING_EFFORT
+      ? colors.yellow(process.env.THINKING_EFFORT)
+      : colors.gray("off");
+    const dbInfo = dbManager.isConnected()
+      ? colors.cyan(dbManager.getActiveInfo()?.database ?? "db")
+      : colors.gray("no-db");
+    // Get context % from latest telemetry (best-effort, non-blocking)
+    const telSum = aggregateSessionTelemetry(sessionId(), sessionStartTime);
+    const ctxPct = telSum.contextPercent;
+    const ctxColor = ctxPct >= 90 ? colors.red : ctxPct >= 75 ? colors.yellow : colors.gray;
+    const ctxStr = ctxColor(`${ctxPct}%`);
+    return colors.gray(`[${colors.bold(model)} · ${persona} · think:${thinking} · db:${dbInfo} · ctx:${ctxStr}] `);
+  };
+
 
   // Welcome banner
   console.log(
@@ -122,9 +155,30 @@ export async function runReplMode(options: {
 
   console.log(renderModelBanner(currentModel()));
 
+  // All known slash commands for tab-completion
+  const STATIC_COMMANDS = [
+    "/help", "/exit", "/quit", "/compact", "/model", "/models",
+    "/thinking", "/image", "/img", "/history", "/paste", "/db",
+    "/database", "/permissions", "/skills", "/hooks", "/middleware",
+    "/state", "/lifecycle", "/eval", "/judge", "/stats", "/telemetry",
+    "/entropy", "/gc", "/dead-code", "/clear", "/new", "/sessions",
+    "/list", "/resume", "/instruct", "/instruction", "/load",
+    "/persona", "/role",
+  ];
+
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
+    completer: (line: string) => {
+      if (line.startsWith("/")) {
+        // Merge static + custom commands for completion
+        const customNames = Array.from(customCommands.keys()).map((n) => `/${n}`);
+        const allCmds = [...STATIC_COMMANDS, ...customNames];
+        const hits = allCmds.filter((c) => c.startsWith(line));
+        return [hits.length ? hits : allCmds, line];
+      }
+      return [[], line];
+    },
   });
   let isRunning = false;
   let multiLineBuffer: string[] = [];
@@ -134,7 +188,7 @@ export async function runReplMode(options: {
     if (isMultiLineMode) {
       process.stdout.write(colors.boldYellow("... ❯ "));
     } else {
-      process.stdout.write(colors.boldGreen("you ❯ "));
+      process.stdout.write(buildStatusLine() + colors.boldGreen("you ❯ "));
     }
   };
 
@@ -146,9 +200,12 @@ export async function runReplMode(options: {
       ask();
     } else {
       process.stdout.write(colors.dim("\nGoodbye! 👋\n"));
-      process.exit(0);
+      closeMcpClients().finally(() => process.exit(0));
     }
   });
+
+  // Clean up MCP child processes on unexpected exit
+  process.once("exit", () => { closeMcpClients(); });
 
   ask();
 
@@ -204,6 +261,7 @@ export async function runReplMode(options: {
         case "/quit":
           console.log(colors.dim("Goodbye! 👋\n"));
           rl.close();
+          await closeMcpClients();
           process.exit(0);
           break;
 
@@ -379,22 +437,25 @@ export async function runReplMode(options: {
           if (history.length === 0) {
             console.log(colors.gray("No messages in current session.\n"));
           } else {
-            console.log(
-              "\n" + colors.bold(`Session History (${sessionId()}):`),
-            );
+            // Show last 10 user/assistant exchanges, skip system and tool noise
+            const visible = history
+              .filter((m) => m.role === "user" || m.role === "assistant")
+              .slice(-10);
+            console.log("\n" + colors.bold(`Session History (${sessionId()}) — last ${visible.length} messages:`));
             console.log(colors.gray("─".repeat(68)));
-            for (const m of history.slice(-6)) {
-              if (m.role === "system") continue;
-              const roleTag =
-                m.role === "user"
-                  ? colors.boldGreen("user:")
-                  : colors.boldCyan("agent:");
-              const text =
-                typeof m.content === "string"
-                  ? m.content.slice(0, 100)
+            visible.forEach((m, i) => {
+              const idx = colors.gray(`#${i + 1}`);
+              const roleTag = m.role === "user"
+                ? colors.boldGreen("you:")
+                : colors.boldCyan("agent:");
+              const raw = typeof m.content === "string"
+                ? m.content.replace(/\n+/g, " ").trim()
+                : Array.isArray(m.content)
+                  ? (m.content.find((b: any) => b.type === "text")?.text ?? "[multipart]").replace(/\n+/g, " ").trim()
                   : "[tool calls]";
-              console.log(`${roleTag} ${text}`);
-            }
+              const preview = raw.length > 240 ? raw.slice(0, 240) + colors.gray("...") : raw;
+              console.log(`${idx} ${roleTag} ${preview}`);
+            });
             console.log();
           }
           break;
@@ -509,8 +570,8 @@ export async function runReplMode(options: {
 
         case "/eval":
         case "/judge": {
-          const lastAssistantMsg = [...messages].reverse().find((m) => m.role === "assistant");
-          const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
+          const lastAssistantMsg = [...history].reverse().find((m) => m.role === "assistant");
+          const lastUserMsg = [...history].reverse().find((m) => m.role === "user");
           if (!lastAssistantMsg) {
             console.log(colors.yellow("\n⚠️ No assistant response available to evaluate yet.\n"));
             break;
@@ -520,7 +581,7 @@ export async function runReplMode(options: {
           const evalRes = await evaluatorEngine.evaluate({
             prompt: promptText,
             output: outputText,
-            messages,
+            messages: history,
           });
           console.log("\n" + evaluatorEngine.formatEvaluationReport(evalRes) + "\n");
           break;
@@ -776,8 +837,61 @@ export async function runReplMode(options: {
         );
       }
       process.stdout.write("\n\n");
+
+      // ── Auto-compact warning based on actual telemetry ─────────────────────
+      const telSum = aggregateSessionTelemetry(sessionId(), sessionStartTime);
+      if (telSum.contextPercent >= 92 && telSum.turns > 0) {
+        // Auto-compact silently at 92% to avoid hitting the hard limit
+        try {
+          const summaryPrompt = "Summarize the key facts, decisions, and instructions from our conversation so far in 3-4 concise bullet points.";
+          const summary = await runAgentMode(summaryPrompt, history, currentSessionFile, "cli");
+          history = [
+            { role: "user", content: `[Context Summary]:\n${summary}` },
+            { role: "assistant", content: "Understood. Context loaded. Ready to continue." },
+          ];
+          rewriteSessionFile(currentSessionFile, history);
+          process.stdout.write(
+            colors.yellow("\n⚠️  Context was at ") +
+            colors.red(`${telSum.contextPercent}%`) +
+            colors.yellow(" — auto-compacted to 2 messages.\n\n"),
+          );
+        } catch {
+          // Non-fatal — just warn
+          process.stdout.write(
+            colors.yellow(`\n⚠️  Context at ${telSum.contextPercent}% (auto-compact failed — type /compact manually).\n\n`),
+          );
+        }
+      } else if (telSum.contextPercent >= 75 && telSum.turns > 0) {
+        process.stdout.write(
+          colors.yellow(`  ⚠️  Context at ${telSum.contextPercent}% `) +
+          colors.gray(`(${telSum.contextTokens.toLocaleString()} / ${telSum.configuredContextLimit.toLocaleString()} tokens) — type `) +
+          colors.boldYellow("/compact") +
+          colors.gray(" to free space.\n"),
+        );
+      }
     } catch (e: any) {
-      process.stdout.write(`\n${colors.red(`Error: ${e.message}`)}\n\n`);
+      // Classify the error for actionable feedback
+      const msg: string = e.message ?? "Unknown error";
+      const isOom = /out of memory|oom|CUDA out/i.test(msg);
+      const isTimeout = /timeout|ETIMEDOUT|timed out/i.test(msg);
+      const isStreamEof = /unexpected eof|connection reset|ECONNRESET|socket hang up/i.test(msg);
+
+      process.stdout.write(`\n${colors.red("❌ Error: ")}${msg}\n`);
+
+      if (isOom) {
+        process.stdout.write(colors.yellow("  → Model ran out of VRAM. Try /compact to reduce context, or switch to a smaller model with /model.\n"));
+      } else if (isTimeout) {
+        process.stdout.write(colors.yellow("  → Request timed out. Ollama may be busy or overloaded. Try again or run /compact.\n"));
+      } else if (isStreamEof) {
+        process.stdout.write(colors.yellow("  → Stream dropped (Ollama restarted?). Your message was NOT saved — safe to resend.\n"));
+        // Remove incomplete assistant message that may have been pushed to history
+        if (history.length > 0 && history[history.length - 1].role === "assistant") {
+          history.pop();
+        }
+      } else {
+        process.stdout.write(colors.gray("  → Unexpected error. Your message was NOT saved — safe to resend.\n"));
+      }
+      process.stdout.write("\n");
     } finally {
       isRunning = false;
     }
