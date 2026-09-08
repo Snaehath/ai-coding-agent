@@ -21,6 +21,7 @@ import {
   REGISTERED_MODELS,
   resolveModel,
   promptSelectModel,
+  formatModelsCatalog,
 } from "./models.ts";
 import {
   createMarkdownStreamer,
@@ -120,9 +121,9 @@ export async function runReplMode(options: {
       ) +
       "\n" +
       colors.boldCyan("║") +
-      "           🤖 " +
-      colors.bold("Local Coding Agent") +
-      "            " +
+      "             🤖 " +
+      colors.bold("Autonomous Local System Agent") +
+      "              " +
       colors.boldCyan("║") +
       "\n" +
       colors.boldCyan(
@@ -270,8 +271,9 @@ export async function runReplMode(options: {
             "\n" +
               colors.bold("System Commands:") +
               `\n  ${colors.boldYellow("/help")}             Show this menu` +
+              `\n  ${colors.boldYellow("/models")}           List installed local models, vision support & VRAM` +
+              `\n  ${colors.boldYellow("/model [alias]")}    Switch AI model (or interactive selector if empty)` +
               `\n  ${colors.boldYellow("/compact")}          Compress conversation history to save tokens` +
-              `\n  ${colors.boldYellow("/model [name]")}     Switch AI model (opens interactive selector)` +
               `\n  ${colors.boldYellow("/thinking [level]")} Set reasoning effort (low, high, off)` +
               `\n  ${colors.boldYellow("/image <path>")}     Attach an image for vision models` +
               `\n  ${colors.boldYellow("/history")}          View recent conversation history` +
@@ -344,13 +346,28 @@ export async function runReplMode(options: {
           break;
         }
 
-        case "/model":
         case "/models": {
-          const rawArg = rest[0];
-          if (rawArg) {
+          const rawArg = rest[0]?.toLowerCase().trim();
+          if (rawArg && rawArg !== "list") {
             const targetModel = resolveModel(rawArg);
             process.env.MODEL = targetModel.id;
             console.log(renderModelBanner(targetModel.id));
+          } else {
+            console.log("\n" + formatModelsCatalog() + "\n");
+          }
+          break;
+        }
+
+        case "/model": {
+          const rawArg = rest[0];
+          if (rawArg) {
+            if (rawArg.toLowerCase() === "list") {
+              console.log("\n" + formatModelsCatalog() + "\n");
+            } else {
+              const targetModel = resolveModel(rawArg);
+              process.env.MODEL = targetModel.id;
+              console.log(renderModelBanner(targetModel.id));
+            }
           } else {
             rl.pause();
             const chosen = await promptSelectModel(currentModel());

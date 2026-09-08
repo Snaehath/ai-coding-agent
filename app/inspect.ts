@@ -2,14 +2,14 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { execSync } from "node:child_process";
-import { loadRegisteredModels } from "./models.ts";
+import { loadRegisteredModels, formatModelsCatalog } from "./models.ts";
 import { loadPermissionConfig } from "./permissions.ts";
 import { loadHooksConfig } from "./hooks.ts";
 import { loadAllSkills } from "./skills.ts";
 import { DEFAULT_IGNORED_DIRS, BINARY_EXTENSIONS } from "./filesystem-tools.ts";
 
 export interface InspectOptions {
-  target: "project" | "environment" | "process" | "config" | "directory" | "file";
+  target: "project" | "environment" | "process" | "config" | "models" | "directory" | "file";
   path?: string;
 }
 
@@ -247,11 +247,17 @@ export function inspectConfig(): string {
     const skills = loadAllSkills();
 
     const activeModel = process.env.MODEL || (models[0]?.id ?? "default");
+    const modelDetails = models.map((m) => {
+      const isVision = (m.capabilities || []).some((c: string) => c.toLowerCase().includes("vision"));
+      const tag = isVision ? " [📷 Vision]" : "";
+      return `${m.name} (${m.aliases?.[0] || m.id})${tag}`;
+    }).join(", ");
 
     return [
       `🛠️ Agent Configuration Introspection`,
       `  • Active Model             : ${activeModel}`,
-      `  • Registered Models (${models.length})  : ${models.map((m) => m.name).join(", ")}`,
+      `  • Registered Models (${models.length})  : ${modelDetails}`,
+      `  • Vision Capable Models    : ${models.filter((m) => (m.capabilities || []).some((c: string) => c.toLowerCase().includes("vision"))).map((m) => m.aliases?.[0] || m.id).join(", ")}`,
       `  • Permission Rules (${perms.rules.length})   : Default Action: ${perms.defaultAction}`,
       `  • Registered Skills (${skills.length})  : ${skills.map((s) => s.name).join(", ") || "None"}`,
       `  • Pre-Tool Hooks           : ${hooks.hooks.filter((h) => h.event === "pre_tool_call").length} configured`,
@@ -303,6 +309,11 @@ export function executeInspect(targetOrArgs: string | InspectOptions = "project"
     case "os":
       return inspectEnvironment();
 
+    case "models":
+    case "model":
+    case "llm":
+      return formatModelsCatalog();
+
     case "config":
     case "configuration":
     case "settings":
@@ -316,7 +327,7 @@ export function executeInspect(targetOrArgs: string | InspectOptions = "project"
           ? inspectDirectory(target)
           : inspectFile(target);
       }
-      return `Unknown inspect target: "${target}". Supported targets: project, file, directory, process, environment, config.`;
+      return `Unknown inspect target: "${target}". Supported targets: project, file, directory, process, environment, models, config.`;
     }
   }
 }

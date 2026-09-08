@@ -186,29 +186,29 @@ export function recommendModelForHardware(gpu?: GpuInfo, ramGB?: number): { id: 
 
   if (effectiveVramGB > 0 && effectiveVramGB <= 4.0) {
     // 4 GB VRAM limitation profile (ideal for 3B - 4B models)
-    if (freeVramMB < 1800) {
+    if (freeVramMB < 2000) {
       return {
         id: "granite",
-        reason: `Tight VRAM (${(freeVramMB / 1024).toFixed(1)} GB available on ${gpu?.name || "GPU"}). Granite 4.2 3B is ultra-compact and lightning fast.`,
+        reason: `Tight VRAM (${(freeVramMB / 1024).toFixed(1)} GB available on ${gpu?.name || "GPU"}). Granite 4.2 3B is ultra-compact (~2.2 GB) and lightning fast.`,
       };
     }
     return {
-      id: "gemma",
-      reason: `4 GB VRAM profile (${(effectiveVramGB).toFixed(1)} GB ${gpu?.name || "GPU"}). Gemma 3 Tools 4B provides vision input + tool calling without exceeding VRAM.`,
+      id: "qwen",
+      reason: `4 GB VRAM profile (${effectiveVramGB.toFixed(1)} GB ${gpu?.name || "GPU"}). Qwen 3.5 4B delivers multimodal vision and coding intelligence (~3.4 GB VRAM).`,
     };
   }
 
   if (effectiveVramGB > 4.0 && effectiveVramGB < 8.0) {
     return {
-      id: "qwen",
-      reason: `Moderate VRAM (${effectiveVramGB.toFixed(1)} GB GPU). Qwen 2.5 Coder 7B gives high coding accuracy.`,
+      id: "liquid",
+      reason: `Moderate VRAM (${effectiveVramGB.toFixed(1)} GB GPU). Liquid LFM2.5 8B provides full VRAM offload and high-speed agentic execution (~5.2 GB VRAM).`,
     };
   }
 
   if (effectiveVramGB >= 8.0) {
     return {
       id: "liquid",
-      reason: `High VRAM headroom (${effectiveVramGB.toFixed(1)} GB GPU). Liquid LFM 2.5 8B provides maximum reasoning capacity.`,
+      reason: `High VRAM headroom (${effectiveVramGB.toFixed(1)} GB GPU). Liquid LFM2.5 8B provides maximum reasoning capacity and low-latency inference.`,
     };
   }
 
@@ -217,13 +217,13 @@ export function recommendModelForHardware(gpu?: GpuInfo, ramGB?: number): { id: 
   if (sysRam >= 16) {
     return {
       id: "qwen",
-      reason: `16 GB System RAM. Qwen 2.5 Coder 7B balanced performance.`,
+      reason: `16 GB System RAM. Qwen 3.5 4B delivers balanced coding and multimodal vision.`,
     };
   }
 
   return {
     id: "granite",
-    reason: `Low RAM / CPU execution. Granite 4.2 3B recommended for zero lag.`,
+    reason: `Low RAM / CPU execution. Granite 4.2 3B recommended for zero lag and minimal footprint.`,
   };
 }
 

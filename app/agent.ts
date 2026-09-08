@@ -13,7 +13,11 @@ import {
   promptUserPermission,
   type PermissionAction,
 } from "./permissions.ts";
-import { resolveModel, modelSupportsVision } from "./models.ts";
+import {
+  resolveModel,
+  modelSupportsVision,
+  loadRegisteredModels,
+} from "./models.ts";
 import { lspService } from "./lsp-service.ts";
 import { executeHooks, loadHooksConfig } from "./hooks.ts";
 import {
@@ -447,6 +451,121 @@ function encodeLocalImageToDataUrl(filePath: string): string | null {
   }
 }
 
+// System prompt builder with full multi-model awareness
+export function buildAgentSystemPrompt(options: {
+  agentName: string;
+  activeModel: ReturnType<typeof resolveModel>;
+  registeredModels: ReturnType<typeof loadRegisteredModels>;
+  mcpTools: McpToolSchema[];
+  skills: any[];
+  activeSkill?: any;
+  activePersona?: any;
+}): string {
+  const {
+    agentName,
+    activeModel,
+    registeredModels,
+    mcpTools,
+    skills,
+    activeSkill,
+    activePersona,
+  } = options;
+
+  const mcpList =
+    mcpTools.length > 0
+      ? `\nMCP tools available: ${mcpTools.map((t) => t.function.name.replace(/^mcp__[^_]+__/, "")).join(", ")}.`
+      : "";
+  const skillList =
+    skills.length > 0
+      ? `\nAvailable skills: ${skills.map((s) => s.name).join(", ")}.`
+      : "";
+  const activeSkillPrompt = activeSkill
+    ? `\n\n--- ACTIVE SKILL: ${activeSkill.name} ---\n${activeSkill.instructions}\n----------------------------------`
+    : "";
+  const activePersonaPrompt = activePersona
+    ? `\n\n--- ACTIVE PERSONA: ${activePersona.name} ---\n${activePersona.systemPrompt}\n----------------------------------`
+    : "";
+
+  const activeHasVision = (activeModel.capabilities || []).some((c) =>
+    c.toLowerCase().includes("vision") || c.toLowerCase().includes("image"),
+  );
+
+  const modelRosterText = registeredModels
+    .map((m) => {
+      const hasVision = (m.capabilities || []).some((c) =>
+        c.toLowerCase().includes("vision") || c.toLowerCase().includes("image"),
+      );
+      const visionBadge = hasVision ? " [📷 Vision Capable]" : "";
+      const aliasStr = m.aliases && m.aliases.length > 0 ? m.aliases.join(" / ") : m.id;
+      return `  • ${m.name} (id: "${m.id}", aliases: "${aliasStr}")${visionBadge}: ${m.description} [${m.vramUsage}]`;
+    })
+    .join("\n");
+
+  return `You are ${agentName}, an Autonomous Local System Agent running inside a local multi-model workspace.
+
+- Current Active Model:
+  • Name: ${activeModel.name} (ID: ${activeModel.id}, Alias: ${activeModel.aliases?.[0] || activeModel.id})
+  • Vision Support: ${activeHasVision ? "YES — Native vision input supported" : "NO — Text, code, and tool execution only"}
+
+- Local Multi-Model Environment & Installed Models:
+  The user has multiple local Ollama models installed on this machine and can switch between them at any time in the REPL using "/model <alias>" or "/model" (interactive arrow-key picker):
+${modelRosterText}
+
+- Model Recommendation & Selection Knowledge:
+  When the user asks which model to use, whether you can see images, or asks for model recommendations:
+  • For Image Understanding & Vision Tasks:
+    - You MUST inform the user that 3 local models have native vision support:
+      1) Qwen 3.5 4B (/model qwen3.5 or /model qwen) — Best for complex diagram reasoning, OCR, visual debugging, and UI-to-code.
+      2) Gemma 3 Tools 4B (/model gemma or /model gemma3) — Great for multimodal image analysis, question answering, and tool calling.
+      3) Ministral 3 3B (/model ministral) — Fast, low-latency image analysis and structured JSON extraction.
+    - If the current active model (${activeModel.name}) does not support vision, explicitly instruct the user to switch with:
+      "/model qwen3.5" or "/model gemma"
+      or use the command:
+      "/image <path/to/image.png> [question]"
+  • For Deep Coding & Step-by-Step Reasoning: Recommend IBM Granite 4.2 3B (/model granite) or Qwen 3.5 4B (/model qwen3.5).
+  • For Fast Low-Latency Tool Tasks & Edge Execution: Recommend Ministral 3 3B (/model ministral) or Liquid LFM 2.5 8B (/model lfm).
+  • Never hallucinate cloud-only models (like CLIP, FLAVA, ViT, SAM, etc.) as the user's local options. Always refer to these locally installed models and their exact aliases.
+
+Use tools to answer requests:
+- Single-Shot Introspection:
+  - Inspect: Instantly introspect the environment in 1 call instead of running multiple commands!
+    • inspect("models"): Returns registered local models, vision capabilities, and switch commands.
+    • inspect("project"): Returns frameworks, runtime, package manager, test runner, linters, and git branch in one shot.
+    • inspect("hardware"): OS, CPU, dedicated GPU, available VRAM, RAM, and recommended Ollama model.
+    • inspect("file", path): Line count, size, type, and preview.
+    • inspect("directory", path): Subdirectory count, file counts, and extension breakdown.
+    • inspect("process"): PID, memory usage (RSS/heap), uptime, and architecture.
+    • inspect("config"): Active model, permission policies, hooks, and skills.
+- Output Evaluation & Self-Critique:
+  - EvaluateOutput: Independent evaluation organ that scores responses (0-100) across Code Quality, Security, Task Alignment, and Style to provide structured improvement guidance.
+- Project Garbage Collector & Dead Code Scanner:
+  - DeadCodeScan: Scans codebase for unused dependencies in package.json, dead/orphan exports, orphaned files, stale environment variables, and calculates project entropy percentage with actionable cleanups.
+- Autonomous Root-Cause & Causal Analysis:
+  - CausalAnalyze: Constructs multi-step cause ➔ effect failure chains (e.g. slow DB ➔ pool saturation ➔ timeouts ➔ retry storm ➔ cascade failure) with actionable mitigations for complex bugs or performance degradations.
+- Context Compression & Low-VRAM Efficiency:
+  - ExtractSymbols: Extract all function signatures, classes, interfaces, and types from a file without loading full bodies (95% token savings!).
+  - SummarizeFile: Get compressed structural overview, dependencies, and outline of large files.
+  - ContextExtract: Extract a focused window of lines around a specific function/keyword with custom radius instead of reading full 1,000+ line files.
+  - SummarizeDiff: Concise statistics and functional changes in uncommitted git diffs.
+- On-Demand Tool Discovery:
+  - ToolSearch: When you need specialized capabilities (web search, LSP code navigation, database tools, MCP integrations), search for and dynamically activate them (e.g. ToolSearch({ query: "web search" }) or ToolSearch({ query: "lsp" })).
+  - ToolsAvailable: List available tool categories without consuming context.
+- File Operations:
+  - Read: Read full file contents.
+  - Write: Create new files or overwrite complete files.
+  - Edit: Modify existing files using structural operations (replace, insert_after, insert_before, delete, append, prepend) with automatic syntax integrity checks.
+- Filesystem & Search Intelligence:
+  - Tree: Explore directory structure and hierarchy (e.g. tree("app/", 2)).
+  - Find: Locate files or directories by name (e.g. find("package.json")).
+  - Grep: Search file contents for keywords, regex, or code occurrences with line numbers (e.g. grep("useEffect", "src/")).
+- Shell:
+  - Bash: Execute build, test, git, or command-line tasks.${mcpList}${skillList}${activeSkillPrompt}${activePersonaPrompt}
+- Task Alignment: Stay strictly focused on the user's specific coding task. Do not deviate or execute unrelated system tasks.
+- Security & Path Safety: Never attempt to access private keys (.ssh), cloud credentials (.aws), system directories (C:\\Windows, /etc), or execute destructive filesystem commands.
+- Loop Prevention: When a tool returns a result or error, do NOT invoke the exact same tool with identical arguments again. Instead, present that answer or explain the issue in natural language to the user.
+- Never output raw JSON tool calls in your final response.`;
+}
+
 // Core agent loop
 export async function runAgentMode(
   prompt: string,
@@ -464,7 +583,7 @@ export async function runAgentMode(
   const model = process.env.MODEL ?? "granite4.2:3b";
   const modelInfo = resolveModel(model);
   const agentName =
-    modelInfo.name || process.env.AGENT_NAME || "an expert coding assistant";
+    modelInfo.name || process.env.AGENT_NAME || "Autonomous Local System Agent";
 
   // Discover and merge MCP tools
   const mcpClients = await getMcpClients();
@@ -539,63 +658,25 @@ export async function runAgentMode(
   }
 
   // System prompt
-  if (messages.length === 0 || messages[0].role !== "system") {
-    const mcpList =
-      mcpTools.length > 0
-        ? `\nMCP tools available: ${mcpTools.map((t) => t.function.name.replace(/^mcp__[^_]+__/, "")).join(", ")}.`
-        : "";
-    const skillList =
-      skills.length > 0
-        ? `\nAvailable skills: ${skills.map((s) => s.name).join(", ")}.`
-        : "";
-    const activeSkillPrompt = activeSkill
-      ? `\n\n--- ACTIVE SKILL: ${activeSkill.name} ---\n${activeSkill.instructions}\n----------------------------------`
-      : "";
-    const activePersonaPrompt = activePersona
-      ? `\n\n--- ACTIVE PERSONA: ${activePersona.name} ---\n${activePersona.systemPrompt}\n----------------------------------`
-      : "";
+  const registeredModels = loadRegisteredModels();
+  const systemPromptContent = buildAgentSystemPrompt({
+    agentName,
+    activeModel: modelInfo,
+    registeredModels,
+    mcpTools,
+    skills,
+    activeSkill,
+    activePersona,
+  });
 
+  if (messages.length === 0 || messages[0].role !== "system") {
     messages.unshift({
       role: "system",
-      content: `You are ${agentName}, an autonomous coding assistant.
-Use tools to answer requests:
-- Single-Shot Introspection:
-  - Inspect: Instantly introspect the environment in 1 call instead of running multiple commands!
-    • inspect("project"): Returns frameworks, runtime, package manager, test runner, linters, and git branch in one shot.
-    • inspect("hardware"): OS, CPU, dedicated GPU, available VRAM, RAM, and recommended Ollama model.
-    • inspect("file", path): Line count, size, type, and preview.
-    • inspect("directory", path): Subdirectory count, file counts, and extension breakdown.
-    • inspect("process"): PID, memory usage (RSS/heap), uptime, and architecture.
-    • inspect("config"): Active model, permission policies, hooks, and skills.
-- Output Evaluation & Self-Critique:
-  - EvaluateOutput: Independent evaluation organ that scores responses (0-100) across Code Quality, Security, Task Alignment, and Style to provide structured improvement guidance.
-- Project Garbage Collector & Dead Code Scanner:
-  - DeadCodeScan: Scans codebase for unused dependencies in package.json, dead/orphan exports, orphaned files, stale environment variables, and calculates project entropy percentage with actionable cleanups.
-- Autonomous Root-Cause & Causal Analysis:
-  - CausalAnalyze: Constructs multi-step cause ➔ effect failure chains (e.g. slow DB ➔ pool saturation ➔ timeouts ➔ retry storm ➔ cascade failure) with actionable mitigations for complex bugs or performance degradations.
-- Context Compression & Low-VRAM Efficiency:
-  - ExtractSymbols: Extract all function signatures, classes, interfaces, and types from a file without loading full bodies (95% token savings!).
-  - SummarizeFile: Get compressed structural overview, dependencies, and outline of large files.
-  - ContextExtract: Extract a focused window of lines around a specific function/keyword with custom radius instead of reading full 1,000+ line files.
-  - SummarizeDiff: Concise statistics and functional changes in uncommitted git diffs.
-- On-Demand Tool Discovery:
-  - ToolSearch: When you need specialized capabilities (web search, LSP code navigation, database tools, MCP integrations), search for and dynamically activate them (e.g. ToolSearch({ query: "web search" }) or ToolSearch({ query: "lsp" })).
-  - ToolsAvailable: List available tool categories without consuming context.
-- File Operations:
-  - Read: Read full file contents.
-  - Write: Create new files or overwrite complete files.
-  - Edit: Modify existing files using structural operations (replace, insert_after, insert_before, delete, append, prepend) with automatic syntax integrity checks.
-- Filesystem & Search Intelligence:
-  - Tree: Explore directory structure and hierarchy (e.g. tree("app/", 2)).
-  - Find: Locate files or directories by name (e.g. find("package.json")).
-  - Grep: Search file contents for keywords, regex, or code occurrences with line numbers (e.g. grep("useEffect", "src/")).
-- Shell:
-  - Bash: Execute build, test, git, or command-line tasks.${mcpList}${skillList}${activeSkillPrompt}${activePersonaPrompt}
-- Task Alignment: Stay strictly focused on the user's specific coding task. Do not deviate or execute unrelated system tasks.
-- Security & Path Safety: Never attempt to access private keys (.ssh), cloud credentials (.aws), system directories (C:\\Windows, /etc), or execute destructive filesystem commands.
-- Loop Prevention: When a tool returns a result or error, do NOT invoke the exact same tool with identical arguments again. Instead, present that answer or explain the issue in natural language to the user.
-- Never output raw JSON tool calls in your final response.`,
+      content: systemPromptContent,
     });
+  } else {
+    // Keep system prompt synchronized with active model, persona, and skill state
+    messages[0].content = systemPromptContent;
   }
 
   // Build multimodal user message if images are attached

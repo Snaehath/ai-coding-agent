@@ -44,14 +44,44 @@ const FALLBACK_MODELS: ModelInfo[] = [
     vramUsage: "~2.2 GB VRAM",
   },
   {
+    id: "PetrosStav/gemma3-tools:4b",
+    name: "Gemma 3 Tools 4B",
+    creator: "PetrosStav / Google",
+    license: "Gemma Terms of use",
+    aliases: ["gemma", "gemma3", "gemma:4b", "gemma3-tools", "google"],
+    description: "Google DeepMind multimodal tool model with native vision and function calling.",
+    capabilities: ["Vision / Image Understanding", "Tool Use", "Function Calling", "Reasoning"],
+    vramUsage: "~3.3 GB VRAM",
+  },
+  {
     id: "ministral-3:3b",
     name: "Mistral Ministral 3 3B",
     creator: "Mistral AI",
     license: "Apache 2.0",
-    aliases: ["ministral", "ministral3", "ministral-3:3b"],
-    description: "High-speed instruction model optimized for fast tool execution and concise reasoning.",
-    capabilities: ["Tool Use", "Speed", "Reasoning", "Instruction Following"],
-    vramUsage: "~2.0 GB VRAM",
+    aliases: ["ministral", "ministral3", "ministral-3:3b", "mistral"],
+    description: "High-speed instruction model optimized for fast tool execution, vision, and concise reasoning.",
+    capabilities: ["Vision / Image Understanding", "Tool Use", "Speed", "Reasoning", "Structured Output"],
+    vramUsage: "~3.0 GB VRAM",
+  },
+  {
+    id: "lfm2.5:8b",
+    name: "Liquid LFM 2.5 8B A1B",
+    creator: "Liquid AI",
+    license: "LFM 1.0",
+    aliases: ["lfm", "lfm2.5", "liquid", "lfm:8b"],
+    description: "Liquid neural state-space model for low-latency agentic workflows and tool chaining.",
+    capabilities: ["Tool Use", "Function Calling", "Agentic Workflows", "Low-Latency Inference"],
+    vramUsage: "~5.2 GB VRAM",
+  },
+  {
+    id: "qwen3.5:4b",
+    name: "Qwen 3.5 4B",
+    creator: "Alibaba Qwen",
+    license: "Apache 2.0",
+    aliases: ["qwen3.5", "qwen", "qwen-3.5", "qwen3.5:4b", "alibaba"],
+    description: "Advanced multimodal coding and reasoning model with native vision and document understanding.",
+    capabilities: ["Vision / Image Understanding", "Reasoning", "Coding", "Tool Calling"],
+    vramUsage: "~3.4 GB VRAM",
   },
 ];
 
@@ -62,24 +92,29 @@ export function loadRegisteredModels(): ModelInfo[] {
       const raw = fs.readFileSync(MODELS_CONFIG_PATH, "utf-8");
       const parsed: ModelsConfigFile = JSON.parse(raw);
       if (Array.isArray(parsed.models) && parsed.models.length > 0) {
-        return parsed.models.map((m: any) => ({
-          id: m.id ?? "",
-          name: m.name ?? m.id ?? "Unknown Model",
-          creator: m.creator ?? "Unknown",
-          license: m.license ?? "Unknown",
-          aliases: Array.isArray(m.aliases)
-            ? m.aliases
-            : typeof m.alias === "string"
-              ? [m.alias]
-              : [],
-          description:
-            m.description ??
-            (Array.isArray(m.capabilities)
-              ? m.capabilities.slice(0, 4).join(" · ")
-              : "Local LLM"),
-          capabilities: Array.isArray(m.capabilities) ? m.capabilities : [],
-          vramUsage: m.vramUsage ?? "Installed in local Ollama",
-        }));
+        return parsed.models.map((m: any) => {
+          const aliasList = Array.from(
+            new Set([
+              ...(Array.isArray(m.aliases) ? m.aliases : []),
+              ...(typeof m.alias === "string" ? [m.alias] : []),
+            ]),
+          );
+          return {
+            id: m.id ?? "",
+            name: m.name ?? m.id ?? "Unknown Model",
+            creator: m.creator ?? "Unknown",
+            license: m.license ?? "Unknown",
+            alias: aliasList[0] ?? "",
+            aliases: aliasList,
+            description:
+              m.description ??
+              (Array.isArray(m.capabilities)
+                ? m.capabilities.slice(0, 4).join(" · ")
+                : "Local LLM"),
+            capabilities: Array.isArray(m.capabilities) ? m.capabilities : [],
+            vramUsage: m.vramUsage ?? "Installed in local Ollama",
+          };
+        });
       }
     } catch {
       // Fallback
@@ -135,6 +170,43 @@ export function modelSupportsVision(modelId: string): boolean {
   );
 }
 
+// Format a clean, human-readable catalog of all registered models
+export function formatModelsCatalog(): string {
+  const models = loadRegisteredModels();
+  const currentModelId = process.env.MODEL ?? DEFAULT_MODEL_ID;
+  const lines: string[] = [
+    `\x1b[1;36m🤖 Installed Local Models (${models.length})\x1b[0m`,
+    `\x1b[90mSwitch anytime with: \x1b[1;33m/model <alias>\x1b[90m or \x1b[1;33m/model\x1b[90m (interactive picker)\x1b[0m\n`,
+  ];
+
+  for (const m of models) {
+    const isActive =
+      m.id.toLowerCase() === currentModelId.toLowerCase() ||
+      (Array.isArray(m.aliases) &&
+        m.aliases.some((a) => a.toLowerCase() === currentModelId.toLowerCase()));
+    const status = isActive ? ` \x1b[1;32m[ACTIVE]\x1b[0m` : "";
+    const hasVision = modelSupportsVision(m.id);
+    const visionTag = hasVision ? ` \x1b[1;35m📷 Vision Enabled\x1b[0m` : ` \x1b[90mText & Code\x1b[0m`;
+    const aliasStr =
+      m.aliases && m.aliases.length > 0
+        ? m.aliases.map((a) => `\x1b[33m${a}\x1b[0m`).join(", ")
+        : "none";
+
+    lines.push(`  \x1b[1m${m.name}\x1b[0m \x1b[90m(${m.id})\x1b[0m${status}`);
+    lines.push(`    \x1b[90m• Aliases    :\x1b[0m ${aliasStr}`);
+    lines.push(`    \x1b[90m• Modality   :\x1b[0m${visionTag} · \x1b[36m${m.vramUsage}\x1b[0m`);
+    lines.push(`    \x1b[90m• Strengths  :\x1b[0m \x1b[37m${m.capabilities.slice(0, 5).join(" · ")}\x1b[0m`);
+    lines.push("");
+  }
+
+  lines.push(`\x1b[1;33m💡 Recommended Choices by Task:\x1b[0m`);
+  lines.push(`  • \x1b[1;35mImage Understanding / Vision\x1b[0m: \x1b[1m/model qwen3.5\x1b[0m, \x1b[1m/model gemma\x1b[0m, or \x1b[1m/model ministral\x1b[0m`);
+  lines.push(`  • \x1b[1;36mDeep Reasoning & Complex Code\x1b[0m: \x1b[1m/model granite\x1b[0m or \x1b[1m/model qwen3.5\x1b[0m`);
+  lines.push(`  • \x1b[1;32mFast Low-Latency Tool Tasks\x1b[0m  : \x1b[1m/model ministral\x1b[0m or \x1b[1m/model lfm\x1b[0m`);
+
+  return lines.join("\n");
+}
+
 // Interactive Model Picker with Arrow Key Navigation & Enter selection
 export async function promptSelectModel(currentModelId: string): Promise<ModelInfo> {
   const models = loadRegisteredModels();
@@ -179,12 +251,13 @@ export async function promptSelectModel(currentModelId: string): Promise<ModelIn
           m.aliases.some((a) => a.toLowerCase() === currentModelId.toLowerCase()));
       const activeBadge = isActive ? boldGreen(" [ACTIVE]") : "";
       const aliasTag = m.aliases && m.aliases[0] ? gray(` (-m ${m.aliases[0]})`) : "";
+      const visionTag = modelSupportsVision(m.id) ? ` \x1b[35m[📷 Vision]\x1b[0m` : "";
 
       if (isSelected) {
-        lines.push(`  ${cyan("❯")} ${boldCyan(`● ${m.name}`)}${aliasTag}${activeBadge}`);
+        lines.push(`  ${cyan("❯")} ${boldCyan(`● ${m.name}`)}${aliasTag}${visionTag}${activeBadge}`);
         lines.push(`    ${gray(m.description)}`);
       } else {
-        lines.push(`    ${dim(`○ ${m.name}`)}${aliasTag}${activeBadge}`);
+        lines.push(`    ${dim(`○ ${m.name}`)}${aliasTag}${visionTag}${activeBadge}`);
         lines.push(`    ${dim(m.description)}`);
       }
     }
