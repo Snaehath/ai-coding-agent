@@ -12,7 +12,7 @@ export type HookEvent = "pre_tool_call" | "post_tool_call" | "on_session_end";
 export type Hook = {
   event: HookEvent;
   tool?: string;
-  action?: "format" | "inspect" | "notify" | "summary" | "stats";
+  action?: "format" | "inspect" | "notify" | "summary" | "stats" | "command_status";
   command?: string;
   description?: string;
 };
@@ -27,6 +27,7 @@ export type HookContext = {
   filePath?: string;
   target?: string;
   result?: string;
+  isError?: boolean;
   actionLog?: string[];
   sessionId?: string;
   args?: any;
@@ -44,6 +45,8 @@ const colors = {
   boldYellow: (s: string) => `\x1b[1;33m${s}\x1b[0m`,
   boldCyan: (s: string) => `\x1b[1;36m${s}\x1b[0m`,
   boldGreen: (s: string) => `\x1b[1;32m${s}\x1b[0m`,
+  red: (s: string) => `\x1b[31m${s}\x1b[0m`,
+  boldRed: (s: string) => `\x1b[1;31m${s}\x1b[0m`,
 };
 
 // Load hooks from config file
@@ -125,6 +128,18 @@ export async function executeHooks(
     // 1. Built-in actions
     if ((hook.action === "format" || hook.action === "inspect") && event === "post_tool_call") {
       formatAndInspectFile(context.filePath);
+    } else if (hook.action === "command_status" && event === "post_tool_call") {
+      if (context.isError) {
+        const rawErr = (context.result || "").replace(/^Error:\s*/i, "").trim();
+        const firstLine = rawErr.split("\n")[0].slice(0, 95);
+        process.stdout.write(
+          `  ${colors.dim("🪝")} ${colors.magenta("[Hook: post_tool_call]")} ${colors.boldRed(`❌ Command Failed: ${context.target}`)} ${firstLine ? colors.gray(`(${firstLine})`) : ""}\n`,
+        );
+      } else {
+        process.stdout.write(
+          `  ${colors.dim("🪝")} ${colors.magenta("[Hook: post_tool_call]")} ${colors.green(`✨ Command Succeeded: ${context.target}`)}\n`,
+        );
+      }
     } else if (
       (hook.action === "notify" || hook.action === "summary" || hook.action === "stats") &&
       event === "on_session_end"

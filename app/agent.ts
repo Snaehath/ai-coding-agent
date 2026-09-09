@@ -514,7 +514,9 @@ Core Capabilities & Tools:
 • Read, Write, Edit: Read, create, and structurally modify files.
 • Grep, Find: Search codebase content and locate files.
 • Inspect: Instant snapshot of project, hardware, processes, or files.
-• ToolSearch: Search and dynamically activate specialized tools (calculator, weather, database, LSP, code compression) as needed.${mcpList}${skillList}${activeSkillPrompt}${activePersonaPrompt}
+• Weather: Fetch live real-time weather and temperature for any city. Always use this tool for weather queries; NEVER simulate or hallucinate weather data.
+• Calculator: Compute exact mathematical calculations, formulas, and conversions.
+• ToolSearch: Search and dynamically activate specialized tools (database, LSP, code compression) as needed.${mcpList}${skillList}${activeSkillPrompt}${activePersonaPrompt}
 
 Execution Guidelines:
 • Compound Tasks: Execute all steps to completion (e.g. fetch -> calculate -> write file). Never stop halfway.
@@ -550,6 +552,15 @@ export async function runAgentMode(
   // Setup Tool Discovery Registry
   setupToolRegistry(mcpTools);
   const isDbActive = dbManager.isConnected();
+
+  // Adaptive Semantic Tool Router: Scan prompt + recent conversation context to auto-activate domain tools
+  const recentHistoryText = messages
+    .slice(-3)
+    .map((m) => (typeof m.content === "string" ? m.content : ""))
+    .join(" ");
+  const contextForRouting = `${prompt} ${recentHistoryText}`;
+  toolRegistry.autoRoute(contextForRouting, isDbActive);
+
   let allTools = BUILTIN_TOOLS.filter((t) => {
     if (t.type === "function" && t.function.name.startsWith("db_")) {
       return isDbActive;
@@ -1235,6 +1246,7 @@ export async function runAgentMode(
 
         // Tool handlers (only execute if not blocked by permission)
         if (result === null) {
+          toolRegistry.activateTool(toolName);
           const { result: execResult, actionSummary } = await executeTool(
             toolName,
             args,
@@ -1290,7 +1302,7 @@ export async function runAgentMode(
         // Trigger post_tool_call lifecycle hooks
         await executeHooks(
           "post_tool_call",
-          { toolName, filePath, target, args, result },
+          { toolName, filePath, target, args, result, isError },
           hooksConfig,
         );
 

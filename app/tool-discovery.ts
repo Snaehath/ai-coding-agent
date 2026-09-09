@@ -57,6 +57,65 @@ class ToolRegistry {
     return false;
   }
 
+  // Adaptive Semantic Tool Router: Automatically activates on-demand tools based on user intent & context
+  autoRoute(textContext: string, isDbActive: boolean = false): string[] {
+    const activated: string[] = [];
+    const text = textContext.toLowerCase();
+
+    const rules: Array<{ pattern: RegExp; tools: string[]; requireDb?: boolean }> = [
+      {
+        pattern: /\b(weather|forecast|temperature|celsius|fahrenheit|humidity|wind|climate|chennai|london|tokyo)\b/i,
+        tools: ["Weather"],
+      },
+      {
+        pattern: /\b(calculate|math|equation|arithmetic|formula|conversion|percentage|convert)\b/i,
+        tools: ["Calculator"],
+      },
+      {
+        pattern: /\b(database|sql|postgres|neondb|tables?|schema|rows?|columns?|query|db_)\b/i,
+        tools: ["db_query", "db_schema", "db_list_tables", "db_describe_table"],
+        requireDb: true,
+      },
+      {
+        pattern: /\b(search online|google|web search|look up on web|search the web|browse online|latest docs?)\b/i,
+        tools: ["WebSearch"],
+      },
+      {
+        pattern: /\b(dead code|unused exports?|orphan|entropy|clean up unused|scan dependencies)\b/i,
+        tools: ["DeadCodeScan"],
+      },
+      {
+        pattern: /\b(root cause|failure chain|why is it slow|causal|troubleshoot degradation)\b/i,
+        tools: ["CausalAnalyze"],
+      },
+      {
+        pattern: /\b(extract symbols?|function signatures?|outline file|classes and types)\b/i,
+        tools: ["ExtractSymbols", "SummarizeFile"],
+      },
+      {
+        pattern: /\b(definition of|find callers?|references to|lsp hover|symbol hover)\b/i,
+        tools: ["LSP_Definition", "LSP_References", "LSP_Hover"],
+      },
+      {
+        pattern: /\b(summarize diff|git diff changes|review diff)\b/i,
+        tools: ["SummarizeDiff"],
+      },
+    ];
+
+    for (const rule of rules) {
+      if (rule.requireDb && !isDbActive) continue;
+      if (rule.pattern.test(text)) {
+        for (const t of rule.tools) {
+          if (this.activateTool(t)) {
+            activated.push(t);
+          }
+        }
+      }
+    }
+
+    return activated;
+  }
+
   // Get currently active tool schemas for LLM payload
   getActiveSchemas(): any[] {
     const schemas: any[] = [];
@@ -116,10 +175,15 @@ export const toolRegistry = new ToolRegistry();
 
 // Tool execution handlers for on-demand discovery
 export function executeToolSearch(query: string, category?: string): string {
-  const { results, activated } = toolRegistry.search(query, category);
+  const q = String(query ?? "").trim();
+  if (!q || q === "all" || q === "list" || q === "*") {
+    return executeToolsAvailable(category);
+  }
+
+  const { results, activated } = toolRegistry.search(q, category);
 
   if (results.length === 0) {
-    return `No specialized tools found matching "${query}"${category ? ` in category "${category}"` : ""}.\nUse ToolsAvailable to see all categories.`;
+    return `No specialized tools found matching "${q}"${category ? ` in category "${category}"` : ""}.\n\n` + executeToolsAvailable(category);
   }
 
   const lines = [

@@ -190,7 +190,9 @@ export function summarizeDiff(filePathOrRef?: string): string {
 // 5. Intelligent History Compaction for Low-Memory / Low-VRAM Contexts
 export function compressHistory(messages: any[], maxTokens: number = 8000): { messages: any[]; compacted: boolean } {
   const currentTokens = estimateMessagesTokens(messages);
-  if (currentTokens <= maxTokens || messages.length <= 4) {
+  // Compact proactively at 65% context budget so system prompt, tool schemas, and output generation never overflow
+  const threshold = Math.floor(maxTokens * 0.65);
+  if (currentTokens <= threshold || messages.length <= 4) {
     return { messages, compacted: false };
   }
 

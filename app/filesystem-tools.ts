@@ -228,12 +228,17 @@ export function executeFind(
     }
 
     const cleanName = name.trim().toLowerCase().replace(/^['"]|['"]$/g, "");
+    const isGlob = /[*?]/.test(cleanName);
+    const matcher = isGlob ? globToRegExp(cleanName) : null;
     const matches: string[] = [];
 
     walkFileSystem(root, (entry, fullPath) => {
       if (matches.length >= maxResults) return false;
       const rel = path.relative(process.cwd(), fullPath).replace(/\\/g, "/");
-      if (entry.name.toLowerCase().includes(cleanName)) {
+      const matched = matcher
+        ? matcher.test(rel) || matcher.test(entry.name.toLowerCase())
+        : entry.name.toLowerCase().includes(cleanName);
+      if (matched) {
         matches.push(rel + (entry.isDirectory() ? "/" : ""));
       }
     });

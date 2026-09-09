@@ -89,23 +89,6 @@ export const BUILTIN_TOOLS: OpenAI.Chat.Completions.ChatCompletionFunctionTool[]
   {
     type: "function",
     function: {
-      name: "Delete",
-      description: "Delete or remove a file from disk safely.",
-      parameters: {
-        type: "object",
-        required: ["file_path"],
-        properties: {
-          file_path: {
-            type: "string",
-            description: "Relative or absolute path of the file to delete (e.g. 'weather.txt').",
-          },
-        },
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
       name: "Edit",
       description:
         "Modify an existing file using safe structural operations (replace, insert_after, insert_before, delete, append, prepend).",
@@ -152,27 +135,6 @@ export const BUILTIN_TOOLS: OpenAI.Chat.Completions.ChatCompletionFunctionTool[]
   {
     type: "function",
     function: {
-      name: "Glob",
-      description: "Fast file pattern matching across the workspace.",
-      parameters: {
-        type: "object",
-        required: ["pattern"],
-        properties: {
-          pattern: {
-            type: "string",
-            description: "Glob pattern (e.g. '**/*.ts', 'src/**/*.tsx').",
-          },
-          path: {
-            type: "string",
-            description: "Base directory to search in (defaults to workspace).",
-          },
-        },
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
       name: "Grep",
       description:
         "Search file contents for regex or text occurrences with line numbers.",
@@ -200,18 +162,18 @@ export const BUILTIN_TOOLS: OpenAI.Chat.Completions.ChatCompletionFunctionTool[]
     type: "function",
     function: {
       name: "Find",
-      description: "Locate files or directories by name.",
+      description: "Locate files or directories by name, substring, or glob pattern (e.g. '*.ts', 'main.ts').",
       parameters: {
         type: "object",
         required: ["name"],
         properties: {
           name: {
             type: "string",
-            description: "Filename or partial name to find.",
+            description: "Filename, substring, or glob pattern to find.",
           },
           path: {
             type: "string",
-            description: "Directory to search from.",
+            description: "Directory to search from (defaults to '.').",
           },
         },
       },
@@ -263,34 +225,17 @@ export const BUILTIN_TOOLS: OpenAI.Chat.Completions.ChatCompletionFunctionTool[]
     type: "function",
     function: {
       name: "ToolSearch",
-      description: "Search for specialized capabilities and dynamically activate tools.",
+      description: "Search specialized capabilities or list registry tools on demand (e.g. 'web search', 'lsp', 'database', 'all').",
       parameters: {
         type: "object",
-        required: ["query"],
         properties: {
           query: {
             type: "string",
-            description: "Search keywords (e.g. 'web search', 'lsp', 'database').",
+            description: "Search keywords or 'all' to list (e.g. 'database', 'weather', 'calculator').",
           },
           category: {
             type: "string",
             description: "Optional filter category.",
-          },
-        },
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "ToolsAvailable",
-      description: "List tool categories and registry inventory without prompt overhead.",
-      parameters: {
-        type: "object",
-        properties: {
-          category: {
-            type: "string",
-            description: "Optional category filter.",
           },
         },
       },
@@ -502,7 +447,8 @@ export function setupToolRegistry(mcpTools: McpToolSchema[] = []) {
     "Find",
     "Inspect",
     "ToolSearch",
-    "ToolsAvailable",
+    "Weather",
+    "Calculator",
   ]);
 
   for (const tool of BUILTIN_TOOLS) {
@@ -963,10 +909,23 @@ export async function executeTool(
       if (typeof command === "object" && command !== null) {
         command = (command as any).command ?? (command as any).cmd ?? String(command);
       }
+      let cmdStr = String(command);
+      if (process.platform === "win32") {
+        // Strip redundant sh -c wrappers on Windows
+        const shMatch = cmdStr.match(/^sh\s+-c\s+["'](.*)["']$/s);
+        if (shMatch) cmdStr = shMatch[1];
+
+        // Normalize ambiguous Linux flags in PowerShell (e.g. rm -f -> Remove-Item -Force)
+        cmdStr = cmdStr
+          .replace(/\brm\s+-rf\b/g, "Remove-Item -Recurse -Force")
+          .replace(/\brm\s+-f\b/g, "Remove-Item -Force")
+          .replace(/\bls\s+-la\b/g, "Get-ChildItem -Force")
+          .replace(/\bls\s+-l\b/g, "Get-ChildItem");
+      }
       try {
         result = await new Promise<string>((resolve) => {
           exec(
-            String(command),
+            cmdStr,
             { shell: process.platform === "win32" ? "powershell.exe" : undefined },
             (err, stdout, stderr) => {
               if (err) resolve(`Error: ${stderr || err.message}`);

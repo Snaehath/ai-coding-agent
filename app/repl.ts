@@ -33,6 +33,7 @@ import { middlewarePipeline } from "./middleware.ts";
 import { stateMachine } from "./state-machine.ts";
 import { evaluatorEngine } from "./evaluators.ts";
 import { dbManager } from "./connectors/db-manager.ts";
+import { executeToolsAvailable } from "./tool-discovery.ts";
 
 // ANSI terminal colors
 export const colors = {
@@ -155,7 +156,7 @@ export async function runReplMode(options: {
     "/state", "/lifecycle", "/eval", "/judge", "/stats", "/telemetry",
     "/entropy", "/gc", "/dead-code", "/clear", "/new", "/sessions",
     "/list", "/resume", "/instruct", "/instruction", "/load",
-    "/persona", "/role",
+    "/persona", "/role", "/tools",
   ];
 
   const rl = readline.createInterface({
@@ -280,6 +281,7 @@ export async function runReplMode(options: {
               `\n  ${colors.boldYellow("/stats")}            View real-time agent telemetry & metrics` +
               `\n  ${colors.boldYellow("/instruct <file>")}  Execute prompt from an instruction file` +
               `\n  ${colors.boldYellow("/persona [name]")}   Switch agent persona/role (e.g. /persona dba)` +
+              `\n  ${colors.boldYellow("/tools [category]")}  List tool catalog, active status & categories` +
               `\n  ${colors.boldYellow("/clear")} | ${colors.boldYellow("/new")}     Start a fresh session` +
               `\n  ${colors.boldYellow("/sessions")} | ${colors.boldYellow("/list")} List saved sessions` +
               `\n  ${colors.boldYellow("/resume <id>")}    Resume an existing session` +
@@ -573,6 +575,11 @@ export async function runReplMode(options: {
         case "/state":
         case "/lifecycle": {
           console.log("\n" + stateMachine.renderStateReport() + "\n");
+          break;
+        }
+
+        case "/tools": {
+          console.log("\n" + executeToolsAvailable(rest[0]) + "\n");
           break;
         }
 
