@@ -41,6 +41,8 @@ export const DEFAULT_PERMISSIONS: PermissionConfig = {
     // Allow safe tools by default
     { tool: "Read", action: "allow" },
     { tool: "WebSearch", action: "allow" },
+    { tool: "Calculator", action: "allow" },
+    { tool: "Weather", action: "allow" },
     { tool: "Bash", action: "allow" },
     { tool: "Write", action: "allow" },
   ],

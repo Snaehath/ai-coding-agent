@@ -72,6 +72,21 @@ const TOOL_SCHEMAS = [
       required: ["location"],
     },
   },
+  {
+    name: "calculate",
+    description:
+      "Performs exact mathematical calculations, arithmetic expressions, and unit/temperature conversions (e.g. '(32 * 9/5) + 32' or '28 * 1.8 + 32').",
+    inputSchema: {
+      type: "object",
+      properties: {
+        expression: {
+          type: "string",
+          description: "Mathematical expression to evaluate.",
+        },
+      },
+      required: ["expression"],
+    },
+  },
 ];
 
 // Tool handlers
@@ -190,6 +205,63 @@ async function handleGetWeather(args: Record<string, any>): Promise<string> {
   }
 }
 
+function handleCalculate(args: Record<string, any>): string {
+  const expr = String(args.expression ?? "").trim();
+  if (!expr) return "Error: Expression is required.";
+  try {
+    let clean = expr
+      .replace(/\^/g, "**")
+      .replace(/×/g, "*")
+      .replace(/÷/g, "/")
+      .replace(/π/gi, "Math.PI")
+      .replace(/\bpi\b/gi, "Math.PI")
+      .replace(/\be\b/gi, "Math.E");
+
+    const mathFuncs = [
+      "sqrt",
+      "cbrt",
+      "abs",
+      "round",
+      "floor",
+      "ceil",
+      "pow",
+      "sin",
+      "cos",
+      "tan",
+      "log",
+      "min",
+      "max",
+    ];
+    for (const fn of mathFuncs) {
+      const regex = new RegExp(`\\b${fn}\\s*\\(`, "gi");
+      clean = clean.replace(regex, `Math.${fn}(`);
+    }
+
+    const forbidden = /(process|global|window|eval|Function|constructor|prototype|import|require|fs|child_process|exec|this|\[|\]|;)/i;
+    if (forbidden.test(clean)) {
+      return `Error: Invalid or forbidden tokens in expression "${expr}".`;
+    }
+
+    const sanitized = clean.replace(/Math\.[a-zA-Z0-9]+/g, "");
+    if (!/^[\d\s+\-*/%(),.eE]+$/.test(sanitized)) {
+      return `Error: Expression contains invalid characters: "${expr}".`;
+    }
+
+    const fn = new Function(`"use strict"; return (${clean});`);
+    const val = fn();
+    if (typeof val !== "number" || isNaN(val)) {
+      return `Error: Result is not a valid number (got ${val}).`;
+    }
+
+    const isInt = Number.isInteger(val);
+    const formatted = isInt ? `${val}` : `${val.toFixed(2)} (exact: ${val})`;
+
+    return `🧮 Calculator Result: ${expr} = ${formatted}`;
+  } catch (err: any) {
+    return `Error calculating expression "${expr}": ${err.message}`;
+  }
+}
+
 // JSON-RPC helpers
 type JsonRpcId = number | string | null;
 
@@ -245,6 +317,8 @@ for await (const line of rl) {
         text = await handleHttpPing(toolArgs);
       } else if (toolName === "get_weather") {
         text = await handleGetWeather(toolArgs);
+      } else if (toolName === "calculate" || toolName === "calculator") {
+        text = handleCalculate(toolArgs);
       } else {
         respondError(id, -32601, `Unknown tool: ${toolName}`);
         break;

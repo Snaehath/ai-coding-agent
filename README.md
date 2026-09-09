@@ -1,13 +1,13 @@
 # 🤖 Autonomous Local System Agent
 
-> A fast, extensible, local-first autonomous system agent and developer copilot built with **TypeScript & Bun**. Designed to run seamlessly with local **Ollama** models (Granite, Qwen 3.5, Gemma 3, Ministral, Liquid LFM) and cloud LLMs via OpenAI-compatible endpoints.
+> A fast, extensible, local-first autonomous system agent and developer copilot built with **TypeScript & Bun**. Designed to run seamlessly with local **Ollama** models (Granite, Qwen 3.5, Gemma 3, Ministral, Liquid LFM, Parable Fable) and cloud LLMs via OpenAI-compatible endpoints.
 
 ---
 
 ## 🌟 Highlights & Features
 
 ### ⚡ 1. Local Multi-Model Engine & Environment Awareness
-- **Dynamic Model Switching**: Switch models on the fly with the arrow-key interactive picker (`/model`), instant alias switch (`/model qwen3.5`, `/model gemma`, `/model ministral`, `/model granite`, `/model lfm`), or CLI flags (`-m <alias>`).
+- **Dynamic Model Switching**: Switch models on the fly with the arrow-key interactive picker (`/model`), instant alias switch (`/model fable`, `/model qwen3.5`, `/model gemma`, `/model ministral`, `/model granite`, `/model lfm`), or CLI flags (`-m <alias>`).
 - **Installed Local Model Knowledge**: The agent possesses full runtime awareness of all registered local models in the environment. When asked for recommendations, it identifies the best model from your local roster rather than hallucinating unavailable cloud services.
 - **Model Catalog (`/models`)**: Type `/models` to inspect all installed local models, their memory footprints, vision capabilities, and switch shortcuts.
 - **Dynamic Context Budgeting**: Queries Ollama's `/api/show` in real-time to track architectural limits (e.g. 131k for Granite) vs. active session context (`num_ctx`).
@@ -18,6 +18,7 @@
 | Model | Aliases | VRAM | Native Modality | Primary Strengths & Recommended Use Cases |
 | :--- | :--- | :--- | :--- | :--- |
 | **IBM Granite 4.2 3B** | `granite`, `ibm`, `granite4.2` | ~2.2 GB | Text & Code | Deep Chain-of-Thought reasoning, complex code refactoring, enterprise RAG, tool calling. |
+| **Parable Fable 4B** | `fable`, `parable`, `fable4b` | ~2.5 GB | Text & Code | **Agentic reasoning** trained on Claude Fable & GPT-5.5 tool traces, `<think>` planning, multi-step execution. |
 | **Qwen 3.5 4B** | `qwen3.5`, `qwen`, `alibaba` | ~3.4 GB | 📷 **Vision + Code** | **Complex image understanding**, OCR, UI mockups, architectural diagrams, reasoning, coding. |
 | **Gemma 3 Tools 4B** | `gemma`, `gemma3`, `google` | ~3.3 GB | 📷 **Vision + Code** | **Multimodal image analysis**, function calling, general chat, multilingual reasoning. |
 | **Mistral Ministral 3 3B**| `ministral`, `mistral` | ~3.0 GB | 📷 **Vision + Code** | **Fast vision analysis**, low-latency tool execution, structured JSON, document Q&A. |
@@ -25,6 +26,7 @@
 
 > **💡 Quick Model Recommendations:**
 > - **For Image Understanding / Vision Tasks**: Switch to `/model qwen3.5`, `/model gemma`, or `/model ministral`.
+> - **For Agentic Planning & Multi-Step Workflows**: Switch to `/model fable` (Parable Fable 4B).
 > - **For Deep Coding & Reasoning**: Switch to `/model granite` or `/model qwen3.5`.
 > - **For Fast Tool Execution & Low Latency**: Switch to `/model ministral` or `/model lfm`.
 
@@ -143,7 +145,7 @@
 
 ### 🧰 12. On-Demand Tool Discovery & Progressive Context Loading
 - Avoids dumping dozens of tool schemas into every prompt payload:
-  - **Lean Core Toolset**: Initially activates only high-leverage core primitives (`Inspect`, `Read`, `Write`, `Edit`, `Tree`, `Find`, `Grep`, `Bash`, `ToolSearch`, `ToolsAvailable`).
+  - **Lean Core Toolset**: Initially activates only high-leverage core primitives (`Inspect`, `Read`, `Write`, `Edit`, `Tree`, `Find`, `Grep`, `Bash`, `Calculator`, `Weather`, `ToolSearch`, `ToolsAvailable`).
   - **`ToolsAvailable()`**: Lists available catalogs across categories without loading their JSON schemas into prompt context.
   - **`ToolSearch("query")`**: Dynamically searches and hot-loads specialized capabilities (`WebSearch`, LSP symbol tools, custom database tools, or MCP servers) on-demand.
 

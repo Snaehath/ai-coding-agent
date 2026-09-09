@@ -97,6 +97,20 @@ export function renderModelBanner(modelId: string): string {
     ].join("\n");
   }
 
+  // 6. Parable Fable (Parable / AnkitAI - Agentic Planning & Thinking Engine)
+  if (m.includes("fable") || m.includes("parable")) {
+    return [
+      "",
+      `    ${c.boldYellow("       ╭───────╮")}`,
+      `    ${c.boldYellow("      ╱  /\\ /\\  ╲")}     ${c.boldYellow("PARABLE FABLE")} ${c.dim("· 4B")}`,
+      `    ${c.boldCyan("     │  //  \\\\   │")}    ${c.gray("Claude Fable & GPT-5.5 Agentic Reasoning Engine")}`,
+      `    ${c.boldCyan("     │  \\\\  //   │")}    ${c.dim("Capabilities:")} ${c.boldYellow("<think> Planning")} · ${c.cyan("Agent Traces")} · ${c.green("Tool Calling")}`,
+      `    ${c.cyan("      ╲  \\/ \\/  ╱")}     ${c.dim("Memory:")} ${c.boldWhite("~2.5 GB")} · ${c.dim("Status:")} ${c.boldGreen("● Active")}`,
+      `    ${c.cyan("       ╰───────╯")}`,
+      "",
+    ].join("\n");
+  }
+
   // Fallback generic banner
   return [
     "",

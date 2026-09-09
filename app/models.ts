@@ -83,6 +83,16 @@ const FALLBACK_MODELS: ModelInfo[] = [
     capabilities: ["Vision / Image Understanding", "Reasoning", "Coding", "Tool Calling"],
     vramUsage: "~3.4 GB VRAM",
   },
+  {
+    id: "parable/fable:4b",
+    name: "Parable Fable 4B",
+    creator: "Parable / AnkitAI",
+    license: "Apache 2.0",
+    aliases: ["fable", "parable", "fable:4b", "parable/fable", "fable4b"],
+    description: "Agentic reasoning model trained on Claude Fable & GPT-5.5 tool traces, optimized for <think> planning and coding.",
+    capabilities: ["Agentic Reasoning", "Tool Use", "Function Calling", "Planning", "Coding"],
+    vramUsage: "~2.5 GB VRAM",
+  },
 ];
 
 // Load models dynamically from .agents/models.json with full normalization

@@ -428,6 +428,48 @@ export const BUILTIN_TOOLS: OpenAI.Chat.Completions.ChatCompletionFunctionTool[]
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "Calculator",
+      description:
+        "Perform exact mathematical calculations, arithmetic expressions, and unit/temperature conversions (e.g. '(32 * 9/5) + 32' or '28 * 1.8 + 32').",
+      parameters: {
+        type: "object",
+        required: ["expression"],
+        properties: {
+          expression: {
+            type: "string",
+            description:
+              "Mathematical expression to evaluate (e.g. '(30 * 9/5) + 32', '144 / 12', 'sqrt(100) * 5').",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "Weather",
+      description:
+        "Fetches current live weather, temperature (in Celsius & Fahrenheit), humidity, and conditions for any city or location worldwide.",
+      parameters: {
+        type: "object",
+        required: ["location"],
+        properties: {
+          location: {
+            type: "string",
+            description: "City name or location (e.g. 'Chennai', 'London', 'Tokyo').",
+          },
+          format: {
+            type: "string",
+            enum: ["summary", "detailed"],
+            description: "Weather format: 'summary' (concise) or 'detailed' (full breakdown). Defaults to 'detailed'.",
+          },
+        },
+      },
+    },
+  },
 ];
 
 BUILTIN_TOOLS.push(...DB_TOOLS);
@@ -450,6 +492,8 @@ export function setupToolRegistry(mcpTools: McpToolSchema[] = []) {
     "DeadCodeScan",
     "EvaluateOutput",
     "Bash",
+    "Calculator",
+    "Weather",
     "ToolSearch",
     "ToolsAvailable",
   ]);
@@ -466,8 +510,9 @@ export function setupToolRegistry(mcpTools: McpToolSchema[] = []) {
       category = "analysis";
     else if (name === "Bash") category = "terminal";
     else if (name === "Inspect") category = "introspection";
+    else if (name === "Calculator") category = "utility";
+    else if (name === "Weather" || name === "WebSearch") category = "web";
     else if (name.startsWith("LSP_")) category = "navigation";
-    else if (name === "WebSearch") category = "web";
     else if (name.startsWith("db_")) category = "database";
 
     toolRegistry.register({
@@ -552,6 +597,12 @@ export function formatToolSummary(
       return `🔎 Database: Searching columns matching "${args.keyword ?? ""}"`;
     case "db_explain":
       return `⚡ Database: Explaining query "${String(args.query ?? "").slice(0, 40).replace(/\s+/g, " ")}"`;
+    case "Calculator":
+    case "Calculate":
+      return `🧮 Calculating: "${args.expression ?? args.query ?? ""}"`;
+    case "Weather":
+    case "get_weather":
+      return `🌤️ Fetching Weather: ${args.location ?? "Chennai"}`;
     default:
       if (mcpMatch) {
         if (mcpMatch.serverId === "tools") {
@@ -613,6 +664,12 @@ export function extractToolTarget(
       return String(args.path ?? "workspace");
     case "EvaluateOutput":
       return "output";
+    case "Calculator":
+    case "Calculate":
+      return String(args.expression ?? args.query ?? "math");
+    case "Weather":
+    case "get_weather":
+      return String(args.location ?? "Chennai");
     default:
       if (isDbTool(toolName)) {
         return String(args.table_name || args.query || args.keyword || args.schema || "database");
@@ -634,6 +691,119 @@ export function extractToolTarget(
         return mcpMatch.localName;
       }
       return filePath;
+  }
+}
+
+// Safe Mathematical Expression Evaluator
+export function executeCalculate(rawExpression: string): string {
+  try {
+    const expr = String(rawExpression ?? "").trim();
+    if (!expr) return "Error: Expression is required.";
+
+    // Preprocessing: normalize operators and symbols
+    let clean = expr
+      .replace(/\^/g, "**")
+      .replace(/×/g, "*")
+      .replace(/÷/g, "/")
+      .replace(/π/gi, "Math.PI")
+      .replace(/\bpi\b/gi, "Math.PI")
+      .replace(/\be\b/gi, "Math.E");
+
+    // Allow standard Math functions (sqrt, abs, round, floor, ceil, pow, sin, cos, tan, log, min, max)
+    const mathFuncs = [
+      "sqrt",
+      "cbrt",
+      "abs",
+      "round",
+      "floor",
+      "ceil",
+      "pow",
+      "sin",
+      "cos",
+      "tan",
+      "log",
+      "log10",
+      "min",
+      "max",
+    ];
+    for (const fn of mathFuncs) {
+      const regex = new RegExp(`\\b${fn}\\s*\\(`, "gi");
+      clean = clean.replace(regex, `Math.${fn}(`);
+    }
+
+    // Security check: strictly disallow dangerous JavaScript tokens
+    const forbidden = /(process|global|window|eval|Function|constructor|prototype|import|require|fs|child_process|exec|this|\[|\]|;)/i;
+    if (forbidden.test(clean)) {
+      return `Error: Invalid or forbidden tokens detected in mathematical expression "${expr}".`;
+    }
+
+    // Ensure expression only contains numbers, operators, commas, parentheses, dots, spaces, and allowed Math tokens
+    const sanitized = clean.replace(/Math\.[a-zA-Z0-9]+/g, "");
+    if (!/^[\d\s+\-*/%(),.eE]+$/.test(sanitized)) {
+      return `Error: Expression contains invalid characters: "${expr}". Only mathematical numbers, operators (+, -, *, /, %, ^), and standard math functions are allowed.`;
+    }
+
+    const fn = new Function(`"use strict"; return (${clean});`);
+    const val = fn();
+
+    if (typeof val !== "number" || isNaN(val)) {
+      return `Error: Expression did not evaluate to a valid number (result: ${val}).`;
+    }
+
+    const isInt = Number.isInteger(val);
+    const formatted = isInt ? `${val}` : `${val.toFixed(2)} (exact: ${val})`;
+
+    return [
+      `🧮 Calculator Result:`,
+      `• Expression : ${expr}`,
+      `• Evaluated  : ${val}`,
+      `• Formatted  : ${formatted}`,
+    ].join("\n");
+  } catch (err: any) {
+    return `Error evaluating expression "${rawExpression}": ${err.message}`;
+  }
+}
+
+// Live Weather Lookup (wttr.in with j1 json and summary formatting)
+export async function executeWeather(
+  location: string = "Chennai",
+  format: string = "detailed",
+): Promise<string> {
+  const loc = String(location ?? "Chennai").trim();
+  try {
+    const encoded = encodeURIComponent(loc);
+    if (format === "detailed") {
+      const res = await fetch(`https://wttr.in/${encoded}?format=j1`, {
+        headers: { "User-Agent": "curl/7.68.0" },
+        signal: AbortSignal.timeout(6000),
+      });
+      if (!res.ok) return `Weather lookup failed: HTTP ${res.status}`;
+      const data: any = await res.json();
+      const current = data.current_condition?.[0] || {};
+      const area = data.nearest_area?.[0]?.areaName?.[0]?.value || loc;
+      return [
+        `🌤️ Live Weather for ${area}:`,
+        `• Condition   : ${current.weatherDesc?.[0]?.value ?? "Unknown"}`,
+        `• Temperature : ${current.temp_C}°C (${current.temp_F}°F)`,
+        `• Feels Like  : ${current.FeelsLikeC}°C (${current.FeelsLikeF}°F)`,
+        `• Humidity    : ${current.humidity}%`,
+        `• Wind        : ${current.windspeedKmph} km/h ${current.winddir16Point ?? ""}`,
+        `• UV Index    : ${current.uvIndex ?? "N/A"}`,
+      ].join("\n");
+    } else {
+      const res = await fetch(
+        `https://wttr.in/${encoded}?format=%l:+%C,+%t+(feels+like+%f),+Humidity:+%h,+Wind:+%w`,
+        {
+          headers: { "User-Agent": "curl/7.68.0" },
+          signal: AbortSignal.timeout(6000),
+        },
+      );
+      if (!res.ok) return `Weather lookup failed: HTTP ${res.status}`;
+      const text = await res.text();
+      return `🌤️ Live Weather: ${text.trim()}`;
+    }
+  } catch (err: any) {
+    return `Error fetching live weather for "${loc}": ${err.message}`;
   }
 }
 
@@ -784,6 +954,20 @@ export async function executeTool(
       } catch (e: any) {
         result = `Error executing web search: ${e.message}`;
       }
+      break;
+    }
+    case "Calculator":
+    case "Calculate": {
+      const expr = String(args.expression ?? args.query ?? args.input ?? "");
+      result = executeCalculate(expr);
+      actionSummary = `Calculated: ${expr}`;
+      break;
+    }
+    case "Weather":
+    case "get_weather": {
+      const loc = String(args.location ?? "Chennai");
+      result = await executeWeather(loc, args.format ?? "detailed");
+      actionSummary = `Weather: ${loc}`;
       break;
     }
     case "LSP_Definition": {

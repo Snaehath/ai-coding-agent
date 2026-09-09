@@ -226,6 +226,12 @@ export function extractEmbeddedToolCall(
     "DeadCodeScan",
     "Bash",
     "WebSearch",
+    "Calculator",
+    "Calculate",
+    "calculator",
+    "Weather",
+    "get_weather",
+    "weather",
     "LSP_Definition",
     "LSP_References",
     "LSP_DocumentSymbols",
@@ -523,6 +529,7 @@ ${modelRosterText}
       or use the command:
       "/image <path/to/image.png> [question]"
   • For Deep Coding & Step-by-Step Reasoning: Recommend IBM Granite 4.2 3B (/model granite) or Qwen 3.5 4B (/model qwen3.5).
+  • For Agentic Planning & Multi-Step Workflows: Recommend Parable Fable 4B (/model fable) — Trained on Claude Fable & GPT-5.5 agent traces, excels at <think> planning without getting stuck.
   • For Fast Low-Latency Tool Tasks & Edge Execution: Recommend Ministral 3 3B (/model ministral) or Liquid LFM 2.5 8B (/model lfm).
   • Never hallucinate cloud-only models (like CLIP, FLAVA, ViT, SAM, etc.) as the user's local options. Always refer to these locally installed models and their exact aliases.
 
@@ -558,6 +565,9 @@ Use tools to answer requests:
   - Tree: Explore directory structure and hierarchy (e.g. tree("app/", 2)).
   - Find: Locate files or directories by name (e.g. find("package.json")).
   - Grep: Search file contents for keywords, regex, or code occurrences with line numbers (e.g. grep("useEffect", "src/")).
+- Utility & Real-World Operations:
+  - Calculator: Perform exact mathematical calculations, formulas, and unit/temperature conversions (e.g. Calculator({ expression: "(32 * 9/5) + 32" })).
+  - Weather: Fetch live weather, current temperature in Celsius and Fahrenheit, humidity, and forecast for any city or location (e.g. Weather({ location: "Chennai" })).
 - Shell:
   - Bash: Execute build, test, git, or command-line tasks.${mcpList}${skillList}${activeSkillPrompt}${activePersonaPrompt}
 - Task Alignment: Stay strictly focused on the user's specific coding task. Do not deviate or execute unrelated system tasks.
@@ -627,6 +637,8 @@ export async function runAgentMode(
     "DeadCodeScan",
     "Bash",
     "WebSearch",
+    "Calculator",
+    "Weather",
     ...allTools.map((t) => t.function.name),
   ]);
 
