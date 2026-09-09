@@ -89,6 +89,23 @@ export const BUILTIN_TOOLS: OpenAI.Chat.Completions.ChatCompletionFunctionTool[]
   {
     type: "function",
     function: {
+      name: "Delete",
+      description: "Delete or remove a file from disk safely.",
+      parameters: {
+        type: "object",
+        required: ["file_path"],
+        properties: {
+          file_path: {
+            type: "string",
+            description: "Relative or absolute path of the file to delete (e.g. 'weather.txt').",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "Edit",
       description:
         "Modify an existing file using safe structural operations (replace, insert_after, insert_before, delete, append, prepend).",
@@ -477,23 +494,13 @@ BUILTIN_TOOLS.push(...DB_TOOLS);
 // Initialize tool catalog with core and specialized tools
 export function setupToolRegistry(mcpTools: McpToolSchema[] = []) {
   const coreTools = new Set([
-    "Inspect",
+    "Bash",
     "Read",
     "Write",
     "Edit",
-    "Tree",
-    "Find",
     "Grep",
-    "ExtractSymbols",
-    "SummarizeFile",
-    "ContextExtract",
-    "SummarizeDiff",
-    "CausalAnalyze",
-    "DeadCodeScan",
-    "EvaluateOutput",
-    "Bash",
-    "Calculator",
-    "Weather",
+    "Find",
+    "Inspect",
     "ToolSearch",
     "ToolsAvailable",
   ]);
@@ -502,7 +509,7 @@ export function setupToolRegistry(mcpTools: McpToolSchema[] = []) {
     if (tool.type !== "function" || !("function" in tool)) continue;
     const name = tool.function.name;
     let category: any = "specialized";
-    if (["Read", "Write", "Edit", "Tree", "Find", "Grep", "Glob"].includes(name))
+    if (["Read", "Write", "Delete", "Edit", "Tree", "Find", "Grep", "Glob"].includes(name))
       category = "filesystem";
     else if (["ExtractSymbols", "SummarizeFile", "ContextExtract", "SummarizeDiff"].includes(name))
       category = "compression";
@@ -541,6 +548,10 @@ export function formatToolSummary(
       return `📖 Reading  ${filePath}`;
     case "Write":
       return `📝 Writing  ${filePath}`;
+    case "Delete":
+    case "DeleteFile":
+    case "RemoveFile":
+      return `🗑️ Deleting ${filePath}`;
     case "Edit":
       return `✏️ Editing  ${filePath}`;
     case "Glob":
@@ -635,6 +646,10 @@ export function extractToolTarget(
   mcpMatch?: { serverId: string; localName: string } | null,
 ): string {
   switch (toolName) {
+    case "Delete":
+    case "DeleteFile":
+    case "RemoveFile":
+      return filePath;
     case "Bash":
       return String(args.command ?? "");
     case "WebSearch":
@@ -843,6 +858,22 @@ export async function executeTool(
       }
       break;
     }
+    case "Delete":
+    case "DeleteFile":
+    case "RemoveFile": {
+      try {
+        if (!fs.existsSync(filePath)) {
+          result = `File not found: ${filePath}`;
+        } else {
+          fs.unlinkSync(filePath);
+          result = `Deleted: ${filePath}`;
+          actionSummary = `Deleted ${filePath}`;
+        }
+      } catch (e: any) {
+        result = `Error deleting ${filePath}: ${e.message}`;
+      }
+      break;
+    }
     case "Edit": {
       result = executeEdit(filePath, args);
       if (!result.startsWith("Error:")) actionSummary = `Edited ${filePath}`;
@@ -934,10 +965,14 @@ export async function executeTool(
       }
       try {
         result = await new Promise<string>((resolve) => {
-          exec(String(command), (err, stdout, stderr) => {
-            if (err) resolve(`Error: ${stderr || err.message}`);
-            else resolve(stdout.trim() || "Command executed successfully.");
-          });
+          exec(
+            String(command),
+            { shell: process.platform === "win32" ? "powershell.exe" : undefined },
+            (err, stdout, stderr) => {
+              if (err) resolve(`Error: ${stderr || err.message}`);
+              else resolve(stdout.trim() || "Command executed successfully.");
+            },
+          );
         });
         actionSummary = `Ran: ${command}`;
       } catch (e: any) {

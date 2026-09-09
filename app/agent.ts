@@ -44,6 +44,7 @@ import {
   extractToolTarget,
   executeTool,
 } from "./tool-dispatcher.ts";
+import { dbManager } from "./connectors/db-manager.ts";
 
 // Constants
 const PLACEHOLDER_RE =
@@ -210,6 +211,9 @@ export function extractEmbeddedToolCall(
   knownTools: Set<string> = new Set([
     "Read",
     "Write",
+    "Delete",
+    "DeleteFile",
+    "RemoveFile",
     "Edit",
     "Glob",
     "Grep",
@@ -497,83 +501,26 @@ export function buildAgentSystemPrompt(options: {
   );
 
   const modelRosterText = registeredModels
-    .map((m) => {
-      const hasVision = (m.capabilities || []).some((c) =>
-        c.toLowerCase().includes("vision") || c.toLowerCase().includes("image"),
-      );
-      const visionBadge = hasVision ? " [📷 Vision Capable]" : "";
-      const aliasStr = m.aliases && m.aliases.length > 0 ? m.aliases.join(" / ") : m.id;
-      return `  • ${m.name} (id: "${m.id}", aliases: "${aliasStr}")${visionBadge}: ${m.description} [${m.vramUsage}]`;
-    })
-    .join("\n");
+    .map((m) => `${m.id} (${m.name})`)
+    .join(", ");
 
-  return `You are ${agentName}, an Autonomous Local System Agent running inside a local multi-model workspace.
+  return `You are ${agentName}, an Autonomous Local System Agent running in a local workspace.
 
-- Current Active Model:
-  • Name: ${activeModel.name} (ID: ${activeModel.id}, Alias: ${activeModel.aliases?.[0] || activeModel.id})
-  • Vision Support: ${activeHasVision ? "YES — Native vision input supported" : "NO — Text, code, and tool execution only"}
+Active Model: ${activeModel.name} (${activeModel.id}) | Vision: ${activeHasVision ? "YES" : "NO"}
+Available Local Models: ${modelRosterText} (switch anytime with "/model <id>")
 
-- Local Multi-Model Environment & Installed Models:
-  The user has multiple local Ollama models installed on this machine and can switch between them at any time in the REPL using "/model <alias>" or "/model" (interactive arrow-key picker):
-${modelRosterText}
+Core Capabilities & Tools:
+• Bash: Execute shell commands (build, test, git, file operations like deleting via rm, moving, etc.).
+• Read, Write, Edit: Read, create, and structurally modify files.
+• Grep, Find: Search codebase content and locate files.
+• Inspect: Instant snapshot of project, hardware, processes, or files.
+• ToolSearch: Search and dynamically activate specialized tools (calculator, weather, database, LSP, code compression) as needed.${mcpList}${skillList}${activeSkillPrompt}${activePersonaPrompt}
 
-- Model Recommendation & Selection Knowledge:
-  When the user asks which model to use, whether you can see images, or asks for model recommendations:
-  • For Image Understanding & Vision Tasks:
-    - You MUST inform the user that 3 local models have native vision support:
-      1) Qwen 3.5 4B (/model qwen3.5 or /model qwen) — Best for complex diagram reasoning, OCR, visual debugging, and UI-to-code.
-      2) Gemma 3 Tools 4B (/model gemma or /model gemma3) — Great for multimodal image analysis, question answering, and tool calling.
-      3) Ministral 3 3B (/model ministral) — Fast, low-latency image analysis and structured JSON extraction.
-    - If the current active model (${activeModel.name}) does not support vision, explicitly instruct the user to switch with:
-      "/model qwen3.5" or "/model gemma"
-      or use the command:
-      "/image <path/to/image.png> [question]"
-  • For Deep Coding & Step-by-Step Reasoning: Recommend IBM Granite 4.2 3B (/model granite) or Qwen 3.5 4B (/model qwen3.5).
-  • For Agentic Planning & Multi-Step Workflows: Recommend Parable Fable 4B (/model fable) — Trained on Claude Fable & GPT-5.5 agent traces, excels at <think> planning without getting stuck.
-  • For Fast Low-Latency Tool Tasks & Edge Execution: Recommend Ministral 3 3B (/model ministral) or Liquid LFM 2.5 8B (/model lfm).
-  • Never hallucinate cloud-only models (like CLIP, FLAVA, ViT, SAM, etc.) as the user's local options. Always refer to these locally installed models and their exact aliases.
-
-Use tools to answer requests:
-- Single-Shot Introspection:
-  - Inspect: Instantly introspect the environment in 1 call instead of running multiple commands!
-    • inspect("models"): Returns registered local models, vision capabilities, and switch commands.
-    • inspect("project"): Returns frameworks, runtime, package manager, test runner, linters, and git branch in one shot.
-    • inspect("hardware"): OS, CPU, dedicated GPU, available VRAM, RAM, and recommended Ollama model.
-    • inspect("file", path): Line count, size, type, and preview.
-    • inspect("directory", path): Subdirectory count, file counts, and extension breakdown.
-    • inspect("process"): PID, memory usage (RSS/heap), uptime, and architecture.
-    • inspect("config"): Active model, permission policies, hooks, and skills.
-- Output Evaluation & Self-Critique:
-  - EvaluateOutput: Independent evaluation organ that scores responses (0-100) across Code Quality, Security, Task Alignment, and Style to provide structured improvement guidance.
-- Project Garbage Collector & Dead Code Scanner:
-  - DeadCodeScan: Scans codebase for unused dependencies in package.json, dead/orphan exports, orphaned files, stale environment variables, and calculates project entropy percentage with actionable cleanups.
-- Autonomous Root-Cause & Causal Analysis:
-  - CausalAnalyze: Constructs multi-step cause ➔ effect failure chains (e.g. slow DB ➔ pool saturation ➔ timeouts ➔ retry storm ➔ cascade failure) with actionable mitigations for complex bugs or performance degradations.
-- Context Compression & Low-VRAM Efficiency:
-  - ExtractSymbols: Extract all function signatures, classes, interfaces, and types from a file without loading full bodies (95% token savings!).
-  - SummarizeFile: Get compressed structural overview, dependencies, and outline of large files.
-  - ContextExtract: Extract a focused window of lines around a specific function/keyword with custom radius instead of reading full 1,000+ line files.
-  - SummarizeDiff: Concise statistics and functional changes in uncommitted git diffs.
-- On-Demand Tool Discovery:
-  - ToolSearch: When you need specialized capabilities (web search, LSP code navigation, database tools, MCP integrations), search for and dynamically activate them (e.g. ToolSearch({ query: "web search" }) or ToolSearch({ query: "lsp" })).
-  - ToolsAvailable: List available tool categories without consuming context.
-- File Operations:
-  - Read: Read full file contents.
-  - Write: Create new files or overwrite complete files.
-  - Edit: Modify existing files using structural operations (replace, insert_after, insert_before, delete, append, prepend) with automatic syntax integrity checks.
-- Filesystem & Search Intelligence:
-  - Tree: Explore directory structure and hierarchy (e.g. tree("app/", 2)).
-  - Find: Locate files or directories by name (e.g. find("package.json")).
-  - Grep: Search file contents for keywords, regex, or code occurrences with line numbers (e.g. grep("useEffect", "src/")).
-- Utility & Real-World Operations:
-  - Calculator: Perform exact mathematical calculations, formulas, and unit/temperature conversions (e.g. Calculator({ expression: "(32 * 9/5) + 32" })).
-  - Weather: Fetch live weather, current temperature in Celsius and Fahrenheit, humidity, and forecast for any city or location (e.g. Weather({ location: "Chennai" })).
-- Shell:
-  - Bash: Execute build, test, git, or command-line tasks.${mcpList}${skillList}${activeSkillPrompt}${activePersonaPrompt}
-- Task Alignment: Stay strictly focused on the user's specific coding task. Do not deviate or execute unrelated system tasks.
-- Security & Path Safety: Never attempt to access private keys (.ssh), cloud credentials (.aws), system directories (C:\\Windows, /etc), or execute destructive filesystem commands.
-- Loop Prevention: When a tool returns a result or error, do NOT invoke the exact same tool with identical arguments again. Instead, present that answer or explain the issue in natural language to the user.
-- Never output raw JSON tool calls in your final response.`;
+Execution Guidelines:
+• Compound Tasks: Execute all steps to completion (e.g. fetch -> calculate -> write file). Never stop halfway.
+• Task Completion: Once a task is complete, confirm what was done succinctly in 1-2 sentences and STOP. Never ask unprompted questions about what to query next.
+• Autonomy & Error Handling: Never lecture the user on code syntax, raw strings, or command line errors. If a command fails, fix it autonomously and proceed.
+• Security: Never access private keys (.ssh), credentials, or root system files. Never output raw JSON tool schemas in final responses.`;
 }
 
 // Core agent loop
@@ -602,7 +549,14 @@ export async function runAgentMode(
   
   // Setup Tool Discovery Registry
   setupToolRegistry(mcpTools);
-  let allTools = [...BUILTIN_TOOLS, ...mcpTools];
+  const isDbActive = dbManager.isConnected();
+  let allTools = BUILTIN_TOOLS.filter((t) => {
+    if (t.type === "function" && t.function.name.startsWith("db_")) {
+      return isDbActive;
+    }
+    return true;
+  });
+  allTools.push(...mcpTools);
 
   // Discover and match skills
   const skills = loadAllSkills();

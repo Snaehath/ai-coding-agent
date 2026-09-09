@@ -35,9 +35,8 @@ class ToolRegistry {
         category: isDb ? "database" : "mcp",
         description: t.function.description ?? "MCP external tool",
         schema: t,
-        isCore: true, // Configured MCP tools in mcp.json are active by default
+        isCore: false, // Discovered on-demand or activated via ToolSearch
       });
-      this.activeTools.add(t.function.name);
     }
   }
 

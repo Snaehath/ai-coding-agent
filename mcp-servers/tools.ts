@@ -52,41 +52,6 @@ const TOOL_SCHEMAS = [
       required: ["url"],
     },
   },
-  {
-    name: "get_weather",
-    description:
-      "Fetches current live weather, temperature, humidity, and forecast for any city or location worldwide with zero API key required.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        location: {
-          type: "string",
-          description: "City name or location (e.g. 'Tokyo', 'London', 'Chennai', 'San Francisco').",
-        },
-        format: {
-          type: "string",
-          enum: ["summary", "detailed"],
-          description: "Weather format: 'summary' (concise 1-line) or 'detailed' (full breakdown). Defaults to 'summary'.",
-        },
-      },
-      required: ["location"],
-    },
-  },
-  {
-    name: "calculate",
-    description:
-      "Performs exact mathematical calculations, arithmetic expressions, and unit/temperature conversions (e.g. '(32 * 9/5) + 32' or '28 * 1.8 + 32').",
-    inputSchema: {
-      type: "object",
-      properties: {
-        expression: {
-          type: "string",
-          description: "Mathematical expression to evaluate.",
-        },
-      },
-      required: ["expression"],
-    },
-  },
 ];
 
 // Tool handlers
@@ -165,103 +130,6 @@ async function handleHttpPing(args: Record<string, any>): Promise<string> {
   }
 }
 
-async function handleGetWeather(args: Record<string, any>): Promise<string> {
-  const loc = String(args.location ?? "London").trim();
-  const format = args.format ?? "summary";
-  try {
-    const encoded = encodeURIComponent(loc);
-    if (format === "detailed") {
-      const res = await fetch(`https://wttr.in/${encoded}?format=j1`, {
-        headers: { "User-Agent": "curl/7.68.0" },
-        signal: AbortSignal.timeout(6000),
-      });
-      if (!res.ok) return `Weather lookup failed: HTTP ${res.status}`;
-      const data: any = await res.json();
-      const current = data.current_condition?.[0] || {};
-      const area = data.nearest_area?.[0]?.areaName?.[0]?.value || loc;
-      return [
-        `🌤️ Weather for ${area}:`,
-        `• Condition : ${current.weatherDesc?.[0]?.value ?? "Unknown"}`,
-        `• Temp      : ${current.temp_C}°C (${current.temp_F}°F)`,
-        `• Feels Like: ${current.FeelsLikeC}°C (${current.FeelsLikeF}°F)`,
-        `• Humidity  : ${current.humidity}%`,
-        `• Wind      : ${current.windspeedKmph} km/h ${current.winddir16Point ?? ""}`,
-        `• UV Index  : ${current.uvIndex ?? "N/A"}`,
-      ].join("\n");
-    } else {
-      const res = await fetch(
-        `https://wttr.in/${encoded}?format=%l:+%C,+%t+(feels+like+%f),+Humidity:+%h,+Wind:+%w`,
-        {
-          headers: { "User-Agent": "curl/7.68.0" },
-          signal: AbortSignal.timeout(6000),
-        },
-      );
-      if (!res.ok) return `Weather lookup failed: HTTP ${res.status}`;
-      const text = await res.text();
-      return `🌤️ ${text.trim()}`;
-    }
-  } catch (err: any) {
-    return `Error fetching weather for "${loc}": ${err.message}`;
-  }
-}
-
-function handleCalculate(args: Record<string, any>): string {
-  const expr = String(args.expression ?? "").trim();
-  if (!expr) return "Error: Expression is required.";
-  try {
-    let clean = expr
-      .replace(/\^/g, "**")
-      .replace(/×/g, "*")
-      .replace(/÷/g, "/")
-      .replace(/π/gi, "Math.PI")
-      .replace(/\bpi\b/gi, "Math.PI")
-      .replace(/\be\b/gi, "Math.E");
-
-    const mathFuncs = [
-      "sqrt",
-      "cbrt",
-      "abs",
-      "round",
-      "floor",
-      "ceil",
-      "pow",
-      "sin",
-      "cos",
-      "tan",
-      "log",
-      "min",
-      "max",
-    ];
-    for (const fn of mathFuncs) {
-      const regex = new RegExp(`\\b${fn}\\s*\\(`, "gi");
-      clean = clean.replace(regex, `Math.${fn}(`);
-    }
-
-    const forbidden = /(process|global|window|eval|Function|constructor|prototype|import|require|fs|child_process|exec|this|\[|\]|;)/i;
-    if (forbidden.test(clean)) {
-      return `Error: Invalid or forbidden tokens in expression "${expr}".`;
-    }
-
-    const sanitized = clean.replace(/Math\.[a-zA-Z0-9]+/g, "");
-    if (!/^[\d\s+\-*/%(),.eE]+$/.test(sanitized)) {
-      return `Error: Expression contains invalid characters: "${expr}".`;
-    }
-
-    const fn = new Function(`"use strict"; return (${clean});`);
-    const val = fn();
-    if (typeof val !== "number" || isNaN(val)) {
-      return `Error: Result is not a valid number (got ${val}).`;
-    }
-
-    const isInt = Number.isInteger(val);
-    const formatted = isInt ? `${val}` : `${val.toFixed(2)} (exact: ${val})`;
-
-    return `🧮 Calculator Result: ${expr} = ${formatted}`;
-  } catch (err: any) {
-    return `Error calculating expression "${expr}": ${err.message}`;
-  }
-}
-
 // JSON-RPC helpers
 type JsonRpcId = number | string | null;
 
@@ -315,10 +183,6 @@ for await (const line of rl) {
         text = handleListFiles(toolArgs);
       } else if (toolName === "http_ping") {
         text = await handleHttpPing(toolArgs);
-      } else if (toolName === "get_weather") {
-        text = await handleGetWeather(toolArgs);
-      } else if (toolName === "calculate" || toolName === "calculator") {
-        text = handleCalculate(toolArgs);
       } else {
         respondError(id, -32601, `Unknown tool: ${toolName}`);
         break;

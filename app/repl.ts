@@ -100,7 +100,7 @@ export async function runReplMode(options: {
     const persona = process.env.PERSONA ? colors.cyan(process.env.PERSONA) : colors.gray("default");
     const thinking = process.env.THINKING_EFFORT
       ? colors.yellow(process.env.THINKING_EFFORT)
-      : colors.gray("off");
+      : colors.gray("auto");
     const dbInfo = dbManager.isConnected()
       ? colors.cyan(dbManager.getActiveInfo()?.database ?? "db")
       : colors.gray("no-db");
@@ -144,15 +144,6 @@ export async function runReplMode(options: {
       colors.green(sessionId()) +
       colors.dim(` (${history.length} msgs)`),
   );
-
-  // Auto-connect to active database profile if available
-  const autoDb = await dbManager.autoConnect();
-  if (autoDb && autoDb.ok) {
-    console.log(
-      colors.dim("  Database: ") +
-        colors.cyan(`${autoDb.engine.toUpperCase()} (${autoDb.database || "connected"}, ${autoDb.tableCount} tables)`),
-    );
-  }
 
   console.log(renderModelBanner(currentModel()));
 

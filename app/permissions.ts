@@ -37,6 +37,9 @@ export const DEFAULT_PERMISSIONS: PermissionConfig = {
 
     // Ask on writing to critical directories
     { tool: "Write", pattern: "**/package.json", action: "ask", description: "Confirm package changes" },
+    { tool: "Delete", pattern: "**/package.json", action: "ask", description: "Confirm package changes" },
+    { tool: "Delete", pattern: "**/.env*", action: "deny", description: "Protect environment secrets" },
+    { tool: "Delete", pattern: "**/.git/**", action: "deny", description: "Protect git internals" },
 
     // Allow safe tools by default
     { tool: "Read", action: "allow" },
@@ -45,6 +48,7 @@ export const DEFAULT_PERMISSIONS: PermissionConfig = {
     { tool: "Weather", action: "allow" },
     { tool: "Bash", action: "allow" },
     { tool: "Write", action: "allow" },
+    { tool: "Delete", action: "allow" },
   ],
 };
 

@@ -105,6 +105,11 @@ export class DatabaseManager {
       this.activeInfo = null;
       this.activeUrlOrPath = "";
     }
+    const config = this.loadConfig();
+    if (config.active) {
+      delete config.active;
+      this.saveConfig(config);
+    }
   }
 
   // Get active adapter
