@@ -445,10 +445,7 @@ export function setupToolRegistry(mcpTools: McpToolSchema[] = []) {
     "Edit",
     "Grep",
     "Find",
-    "Inspect",
     "ToolSearch",
-    "Weather",
-    "Calculator",
   ]);
 
   for (const tool of BUILTIN_TOOLS) {
@@ -914,6 +911,24 @@ export async function executeTool(
         // Strip redundant sh -c wrappers on Windows
         const shMatch = cmdStr.match(/^sh\s+-c\s+["'](.*)["']$/s);
         if (shMatch) cmdStr = shMatch[1];
+
+        // 2>/dev/null -> 2>$null
+        cmdStr = cmdStr.replace(/2>\s*\/dev\/null/g, "2>$null");
+
+        // head -X or head -n X -> Select-Object -First X
+        cmdStr = cmdStr.replace(/\|\s*head\s+(?:-n\s*)?(\d+)/g, "| Select-Object -First $1");
+
+        // Unix find command normalization for PowerShell
+        const findMatch = cmdStr.match(/^find\s+([^\s]+)(?:\s+-type\s+[fd])?\s+-name\s+["']?([^"'\s]+)["']?(.*)$/i);
+        if (findMatch) {
+          const searchDir = findMatch[1] === "." ? "." : findMatch[1];
+          const filter = findMatch[2];
+          const restOfPipe = findMatch[3] || "";
+          cmdStr = `Get-ChildItem -Path "${searchDir}" -Recurse -Filter "${filter}" -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName ${restOfPipe}`;
+        }
+
+        // Unix grep in pipeline -> Select-String
+        cmdStr = cmdStr.replace(/\|\s*grep(?:\s+-[a-zA-Z]+)?\s+["']?([^"'\n|]+)["']?/g, "| Select-String '$1'");
 
         // Normalize ambiguous Linux flags in PowerShell (e.g. rm -f -> Remove-Item -Force)
         cmdStr = cmdStr

@@ -64,6 +64,18 @@ class ToolRegistry {
 
     const rules: Array<{ pattern: RegExp; tools: string[]; requireDb?: boolean }> = [
       {
+        pattern: /\b(find files?|locate|search files?|list files?|tree|directory structure|where is)\b/i,
+        tools: ["Find", "Tree"],
+      },
+      {
+        pattern: /\b(grep|search code|search text|find occurrences?|look for text|search pattern)\b/i,
+        tools: ["Grep"],
+      },
+      {
+        pattern: /\b(inspect|vram|hardware|system specs|sysinfo|specs|processes|inspect project)\b/i,
+        tools: ["Inspect"],
+      },
+      {
         pattern: /\b(weather|forecast|temperature|celsius|fahrenheit|humidity|wind|climate|chennai|london|tokyo)\b/i,
         tools: ["Weather"],
       },
